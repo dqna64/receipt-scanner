@@ -48,7 +48,7 @@ Verify: `dbmate up/down` clean; integration test queries through the coroutine p
 ## Phase 1 — Auth (first vertical slice)
 
 **Step 5: Register/login/logout + session filter.**
-Deliverable: first-user-only registration, argon2 via libsodium, sessions table + httpOnly cookie, Drogon filter guarding all routes, login rate limit.
+Deliverable: first-user-only registration (open only while users table is empty), argon2 via libsodium, sessions table + httpOnly cookie (~30-day sliding expiry — touch expires_at on authenticated requests), Drogon filter guarding all routes, login rate limit.
 You'll be reviewing: a complete request→coroutine→DB→response slice; RAII around libsodium; how the auth filter composes with handlers.
 Verify: curl script walks the whole flow; integration tests for wrong-password/second-registration/expired-session.
 
@@ -65,19 +65,19 @@ You'll be reviewing: the CPU-work-off-the-event-loop pattern — the single most
 Verify: unit tests on fixture images (rotated, EXIF'd, huge, tiny); assert GPS gone, dimensions right.
 
 **Step 8: Upload + image proxy.**
-Deliverable: `POST /receipts` (multipart → normalize → hash → exact-dup conflict unless force=true → store → row, status=uploaded); `POST /receipts/:id/image` (attach to imageless receipt — same pipeline, updates row instead of creating; sets status=uploaded so the Step 10 worker verify-scans it — until Step 10 lands it just parks there); `GET /receipts`, `GET /receipts/:id`; image proxy endpoint with immutable cache headers.
+Deliverable: `POST /receipts` (multipart → normalize → hash → exact-dup conflict unless force=true → store → row, status=uploaded); `POST /receipts/:id/image` (attach to imageless receipt — same pipeline incl. the exact-dup hash check (409 {duplicate_of} unless force=true, mirroring upload; force stores an independent copy under its own key), updates row instead of creating; sets status=uploaded so the Step 10 worker verify-scans it — until Step 10 lands it just parks there); `GET /receipts` (offset pagination), `GET /receipts/:id`; `DELETE /receipts/:id` (confirmation-gated on the client; always deletes the stored image object — single-owner by construction); image proxy endpoint with immutable cache headers; ownership authorization on every route (non-owned/missing id → 404, per spec API conventions); 15MB upload limit enforced at the app layer (Caddy enforces its copy in Step 2/18).
 You'll be reviewing: multipart handling, streaming a body through a proxy handler, the zero-loss invariant in code.
 Verify: curl a real photo up, fetch it back, row is correct.
 
 **Step 9: Manual entry + reference data.**
-Deliverable: `POST /receipts/manual` (all four kinds, negative totals, offsets link, born reviewed); categories + payment-methods CRUD.
+Deliverable: `POST /receipts/manual` (all four kinds, negative totals, zero totals allowed, offsets link, born reviewed); `PATCH /receipts/:id` (edit fields, mark reviewed); items CRUD (`GET /receipts/:id/items` + create/update/delete); categories CRUD; payment-methods CRUD incl. the stored_value flag.
 You'll be reviewing: how the transaction-kind rules from the spec land in validation code.
-Verify: integration tests — cash coffee, refund with link, transfer; invalid kinds rejected.
+Verify: integration tests — cash coffee, refund with link, transfer, zero-total warranty swap; invalid kinds rejected.
 
 ## Phase 3 — Scan pipeline (the heart, behind a fake first)
 
 **Step 10: Worker + FakeScanProvider.**
-Deliverable: `ScanProvider` interface + fake; event-loop-timer worker: claims uploaded rows, status transitions, attempt counting, 10-min reclaim, 2-scan concurrency cap; scan_failed path + retry endpoint; verify-scan transitions for attached images (fill-empty-only, compare total/date/merchant, match on reviewed row → reviewed, mismatch → pending_review, terminal failure on reviewed row → restore reviewed).
+Deliverable: `ScanProvider` interface + fake; event-loop-timer worker: claims uploaded rows via FOR UPDATE SKIP LOCKED, status transitions, attempt counting, 10-min reclaim, 2-scan concurrency cap; mode discriminator per row (source=scanned → extraction mode; source=manual|recurring → verify mode); scan_failed path + retry endpoint; verify-scan transitions for attached images (fill-empty-only, compare total exact / date ± tolerance / merchant fuzzy, all-match on reviewed row → silently back to reviewed, mismatch → pending_review with diff, terminal failure on reviewed row → restore reviewed).
 You'll be reviewing: async orchestration — the entire reason you picked all-async Drogon. State machine + crash-safety without burning a cent of API money.
 Verify: integration tests incl. kill-the-worker-mid-scan → reclaim works.
 
@@ -89,15 +89,15 @@ Verify: harness run on however many golden receipts exist so far.
 ## Phase 4 — Frontend MVP (first phone-usable moment)
 
 **Step 12: Vite scaffold + auth + upload + history.**
-Deliverable: vanilla JS app — login, upload page (camera/file, client HEIC→JPEG downscale), exact-dup "are you sure? [shows existing]" confirm on 409, status polling with live trace incl. "⚠ possible match found" deep-link, history list; Vite proxy for dev.
+Deliverable: vanilla JS app — login, upload page (camera/file, multi-photo select — one receipt row per image, client HEIC→JPEG downscale), exact-dup "are you sure? [shows existing]" confirm on 409, status polling with live trace incl. "⚠ possible match found" deep-link, history list; Vite proxy for dev.
 Verify: upload a receipt from your actual phone on LAN and watch it reach pending review. **The app exists now.**
 
 **Step 13: Review UI.**
-Deliverable: pending queue with badge; review screen (image beside fields, item editing, sum-mismatch warning, <30s-optimized layout); attach-image button on imageless receipts (manual/recurring); verify-scan mismatch diff (scanned vs recorded values side by side); mark reviewed; edit-after-review; delete.
+Deliverable: pending queue (oldest first, count badge); review screen (image beside fields, item editing, sum-mismatch warning, <30s-optimized layout); scan_failed handling (retry scan or fall back to manual field entry against the stored image); attach-image button on imageless receipts (manual/recurring); verify-scan mismatch diff (scanned vs recorded values side by side); mark reviewed; edit-after-review (keeps reviewed status); delete with confirmation.
 Verify: you review a real receipt end-to-end; friction-ceiling sanity check.
 
 **Step 14: Dedupe.**
-Deliverable: match panel in the review screen; candidates = all matching receipts (total → ±days date → fuzzy merchant) ranked by match strength, labeled by flavor — has-image = "possible duplicate" (discard upload / keep both, images side by side), imageless (manual + recurring, pending or reviewed) = "matching transaction" (merge / keep both); nothing automatic, suggested action highlighted only; merge reuses the Step 10 verify/fill logic (no re-scan), mismatch resolved inline.
+Deliverable: `GET /receipts/:id/matches` (candidates computed at read time, no stored match state; served by the (user_id, total_cents, purchase_date) index; ?suggest= pins a force-included candidate — the attach-conflict dialog's "merge instead" deep-link lands here) + `POST /receipts/:id/merge-from`; match panel in the review screen; candidates = all matching receipts (total → ±days date → fuzzy merchant) ranked by match strength, labeled by flavor — has-image = "possible duplicate" (discard upload / keep both, images side by side), imageless (manual + recurring, pending or reviewed) = "matching transaction" (merge / keep both); nothing automatic, suggested action highlighted only; merge reuses the Step 10 verify/fill logic (no re-scan) — image_key + image_sha256 + raw_ocr_json move to the target, items copy only if target has none, source row deleted (image object retained, ownership transfers) — mismatch resolved inline; discard deletes the upload's row + image object (Step 8 DELETE).
 Verify: integration tests + a deliberate double-upload.
 
 ## Phase 5 — Recurring + browse
@@ -107,13 +107,13 @@ Deliverable: definitions CRUD (custom interval, finite ends, kind, defaults, pur
 Verify: integration tests with clock control; an Afterpay-shaped 4-payment plan exhausts correctly; a Jan-31 monthly anchor clamps to Feb 28/29 then returns to Mar 31 (no drift); a Feb-29 yearly anchor clamps in non-leap years.
 
 **Step 16: Browse + quick-add polish.**
-Deliverable: history filters (status/date/merchant/category/payment/kind/source), receipt detail with zoom, quick-add form with defaults + merchant autocomplete (<15s ceiling).
+Deliverable: history filters (status/date/merchant/category/payment/tax-deductible/kind/source), receipt detail with zoomable image, quick-add form with defaults (date=today, currency=AUD, payment=cash) + recently-used merchant autocomplete (<15s ceiling).
 Verify: stopwatch a cash coffee entry.
 
 ## Phase 6 — Insights
 
 **Step 17: Stats + export.**
-Deliverable: stats endpoints implementing the spec's stats rules (signed sums, transfer + stored-value exclusions, AU-FY, Sydney bucketing): monthly trend, category breakdown, filtered trend, tax-FY total, payment-method crosscheck, cash view; CSV export; charts UI (GSAP where it earns it).
+Deliverable: stats endpoints implementing the spec's stats rules (reviewed-only, signed sums, transfer + stored-value exclusions, group by currency — never sum across, AU-FY, Sydney bucketing): monthly trend, category breakdown, filtered trend (receipt category / merchant / item category — item trends aggregate item amounts), tax-FY total + its receipt list, payment-method crosscheck, cash view; CSV export (receipts + items, date range); charts UI (GSAP where it earns it).
 You'll be reviewing: the SQL — every stats rule from the spec as a query; this PR is where the transaction model proves itself.
 Verify: fixture dataset with known totals; every exclusion rule asserted.
 

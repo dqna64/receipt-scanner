@@ -6,12 +6,18 @@ Daily record of work done. Newest day first. Companion to `spec.md` (what/why) a
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-07-11 | 49b9d880-e645-4e1f-85ad-dd3f73822e53 | Claude | /Users/me/receipt-scanner | motorway1.local |
 | 2026-07-11 | 70feb2fc-d1cf-46c1-b4b7-6b8dd8efc22d | Claude | /Users/me/receipt-scanner | motorway1.local |
 | 2026-07-09 | cfefe238-3b8b-451c-93fe-f6aab5c18730 | Claude | /Users/me/receipt-scanner | motorway1.local |
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
 
 ## 2026-07-11
+
+**Done (second session, unsupervised plan sync)**
+- Full semantic sweep of spec.md vs plan.md (spec = source of truth); patched plan gaps in place, no renumbering (still 19 steps / 7 phases, matching spec's cross-reference). Step 5: sliding session expiry + registration-while-empty wording. Step 8: hash check on attach, DELETE /receipts/:id (+ image object), app-layer 15MB limit, offset pagination. Step 9: items CRUD, PATCH /receipts/:id, stored_value flag, zero-total case. Step 10: worker mode discriminator (extract vs verify) + SKIP LOCKED claim spelled out. Step 12: multi-photo upload. Step 13: scan_failed retry/manual-fallback path, queue ordering. Step 14: matches + merge-from endpoints, merge/discard mechanics from spec. Step 16: tax-deductible filter, quick-add defaults. Step 17: per-currency grouping, reviewed-only, item-amount aggregation for item trends.
+- Concerns raised to user (see session transcript): "sole owner" phrasing on DELETE image cleanup vs single-owner merge mechanics; payment-method seed list undefined in spec (plan Step 4 assumes at least "cash" for the quick-add default); attach-flow hash "warn" response shape (409+force like upload?) unspecified.
+- All three concerns resolved with user, folded into spec + plan: payment-method seed = "cash" only (stored_value=false, needed by quick-add default); attach hash hit = 409 {duplicate_of} unless force=true mirroring upload, dialog offers force-attach (independent object copy) or merge-instead deep-link to S's review screen with ?suggest= pinning this receipt in the match panel — merge direction forced (imageless receipt = target, S = source); DELETE always removes the image object ("sole owner" dropped — objects single-owner by construction) and a new API convention: ownership authorization on every resource route, non-owned/missing → 404 (no existence leak).
 
 **Done**
 - Set up this work log; fixed session ID to the resumable Claude Code UUID.

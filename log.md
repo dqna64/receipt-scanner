@@ -6,11 +6,26 @@ Daily record of work done. Newest day first. Companion to `spec.md` (what/why) a
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-07-14 | e30f2afc-c5c5-4df0-8511-2f8b23a1539f | Claude | /Users/gordonh/receipt-scanner | MacBook-Pro-4.local |
 | 2026-07-11 | 49b9d880-e645-4e1f-85ad-dd3f73822e53 | Claude | /Users/me/receipt-scanner | motorway1.local |
 | 2026-07-11 | 70feb2fc-d1cf-46c1-b4b7-6b8dd8efc22d | Claude | /Users/me/receipt-scanner | motorway1.local |
 | 2026-07-09 | cfefe238-3b8b-451c-93fe-f6aab5c18730 | Claude | /Users/me/receipt-scanner | motorway1.local |
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
+
+## 2026-07-14
+
+**Done (spec critique round 2 — 7 flaws resolved + tags added)**
+- Fresh critical review of spec.md surfaced 7 real flaws (1a-1g) beyond prior passes; each decided and folded into spec.md + plan.md.
+- **1a — trust-gated scan mode:** the extract-vs-verify discriminator now keys off `reviewed_at IS NULL/NOT NULL`, not `source`. Fixes the silent-clobber bug where a scan-failed→manually-filled (source=scanned) row would be overwritten on retry.
+- **1b — HEIC dropped server-side:** server accepts JPEG/PNG/WebP only; client HEIC→JPEG conversion is now MANDATORY (pinned libvips build has no HEIF decoder — kept the arm64-verified feature set intact).
+- **1c — recurring occurrence bookkeeping:** added `occurrences_generated` ordinal (anti-drift: next = anchor + (k+1)×interval), unique (recurring_id, occurrence_ordinal) for idempotent generation, and catch-up = generate only the latest missed occurrence.
+- **1d — FK cleanup:** inbound receipt FKs (offsets/recurring/purchase) + reference-data FKs (category/payment_method) are ON DELETE SET NULL; merge repoints inbound receipt FKs source→target before deleting the source; item_tags ON DELETE CASCADE.
+- **1e — two scan counters:** `scan_attempts` (provider/parse errors, cap 3 → scan_failed) split from `reclaim_count` (crash/timeout, high backstop). Deploy churn can no longer fail a good receipt or pollute the <5% metric.
+- **1f — categories live-join + hard-delete-SET-NULL; NEW tags taxonomy:** categories stay live (rename=stable id, re-categorize reflected in history, delete=SET NULL). Added item-level, many-per-item tags (`tags` + `item_tags`), LLM-proposed via the scanner schema like categories, best-effort. Payment-method delete = SET NULL → "no payment method"; accepted consequence recorded (deleting a stored-value method un-excludes its past purchases).
+- **1g — two-axis state, no `status` column:** replaced the `status` enum with `scan_state[idle|uploaded|scanning|scan_failed]` (pipeline lane) + review/stats state DERIVED from `proposed_at` vs `reviewed_at`. Kills the stats blip entirely — a reviewed receipt stays in stats through an in-flight re-scan and even a crash, leaving only when a completed scan finds a mismatch. `proposed_at` generalizes "scanned_at" so recurring auto-created rows flow through the same review gate.
+- Also folded in two clearly-correct smaller fixes: (user_id, image_sha256)-scoped dup check (no cross-account existence leak); dedupe/match compares within a single currency.
+- Added a new **Invariants** section to spec.md capturing all the above as load-bearing, testable rules (zero-loss, two-axis state, trust-gated mode, attempt/reclaim budgets, recurring idempotency, referential cleanup, ownership, money). plan.md Steps 4/8/9/10/11/13/14/15/17 updated to match; migration 001 (Step 4) now carries the new schema shape.
 
 ## 2026-07-11
 

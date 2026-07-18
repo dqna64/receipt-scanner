@@ -16,7 +16,7 @@ A context-compaction continuation gets a NEW session id — the 2026-07-11 row c
 
 ## 2026-07-18
 
-**Done (spec critique round 3 — 8 findings + a multi-tenant pivot). UNCOMMITTED — pending manual review.**
+**Done (spec critique round 3 — 8 findings + a multi-tenant pivot). Committed ee6b25c.**
 Fresh critical review of spec.md + plan.md surfaced 8 issues; folded in, then two user directives reshaped the auth model and dropped a mistaken feature. Nothing committed (user reviews the working-tree diff first).
 - **A — dedupe total-match contradicted the recurring-merge feature:** the match rule led with EXACT total, but recurring pending rows are created at expected_amount and real invoices drift (variable utilities), so the "upload the real invoice, dedupe offers merge" feature silently never fired. Fix: ONE tolerance-band matching rule for all candidates (± max(match_total_abs_cents=200, 5%·total), same currency, ±days date, fuzzy merchant), ranked by closeness; the has-image vs imageless flavor now governs only the offered ACTION, not tightness. (Re-review of my own first fix caught that an exact-for-has-image split left an OCR-variance blind spot — collapsed to the single rule.) Index changed to (user_id, currency, total_cents, purchase_date) for the range scan.
 - **B — first-registration land-grab (SUPERSEDED by the multi-user pivot below):** originally added a REGISTRATION_TOKEN bootstrap gate. Then the user decided all signups are equal SaaS tenants — there's no privileged owner account to grab, so the token was DROPPED. The replacement concern (open-signup abuse / LLM-cost) is handled by rate-limit + email verification. Net: land-grab is a non-issue under equal tenancy; the token and "single-owner bootstrap" invariant were removed.
@@ -30,7 +30,7 @@ Fresh critical review of spec.md + plan.md surfaced 8 issues; folded in, then tw
 - **Resize tool REMOVED (user directive — it was a note meant for a different project):** stripped the Capture bullet, the "Client resize tool" architecture block, the out-of-scope guard, and the Step 12 additions. All references gone (verified by grep).
 - Config knobs now: SESSION_TOUCH_INTERVAL, match_total_abs_cents/pct, SMTP/email settings (REGISTRATION_TOKEN removed). New Invariants: single-source layered predicate, equal-tenant registration, strengthened tenant isolation. plan Steps 4/5/8/9/12/14/15/17 + TODO updated to match.
 
-**Done (income + magnitude/direction pivot — pulls income into M1). UNCOMMITTED — pending manual review.**
+**Done (income + magnitude/direction pivot — pulls income into M1). Committed ee6b25c.**
 Walked the transaction model against income/investment/super/Beem cases; user then decided to bring INCOME into M1 (incl. scanning paychecks) and reshape the money model. Folded in:
 - **Money model → magnitude + direction (was signed amount):** total_cents/amount_cents now NON-NEGATIVE magnitude; new `direction[inflow|outflow]` field = bank credit/debit side, CHECK-tied to kind for fixed kinds, free for transfer (transfers go both ways: ATM out, share-sale in). Per-kind stat signs moved into the views (signed_spend_cents), not storage. Money invariant + schema + dedupe (magnitude compare) updated.
 - **`income` kind now in M1** (was reserved post-M1): kind enum = purchase|refund|reimbursement|income|transfer. Income = inflow, excluded from spend, summed into new income stats + credit-side reconciliation.
@@ -42,6 +42,8 @@ Walked the transaction model against income/investment/super/Beem cases; user th
 - **Investments = cash movement only (decided):** buy/sell = transfer, brokerage = fees purchase; holdings/cost-basis/valuation NOT represented (portfolio tracking is a different app) — noted in spec.
 - **Reconciliation now two-sided** (debit + credit) — success criterion updated from debit-only. New insights: income trend, income-by-category, net cashflow, two-sided crosscheck. New endpoints: /stats/income, /stats/cashflow, /stats/reconcile.
 - Open Eng Decisions: PDF ingestion for digital payslips (M1 workaround = screenshot); income-tax/PAYG reckoning explicitly out. plan Steps 4/9/10/11/13/16/17 updated. Sub-cent escape hatch (rescale integer unit, e.g. micro-dollars — never floats) documented in Money for future fractional needs like fuel unit price.
+- Reaffirmed after review: `direction` stays a 2-value field [inflow|outflow], NOT a 3-value [inflow|outflow|transfer] — a transfer still has a physical in/out direction that reconciliation needs (ATM withdrawal = debit, share-sale = credit); "transfer" lives on `kind`. direction (physical/bank axis) and kind (semantic axis) are orthogonal; a 3-value direction would collapse them and break two-sided reconciliation.
+- Committed all three threads (round-3 findings, multi-tenant pivot, income pivot) as ONE commit ee6b25c — the spec edits are entangled across the same files/sections (income pivot rewrote the same views round-3 introduced), so they're coupled, not cleanly splittable. Not pushed (no GitHub remote yet).
 
 ## 2026-07-14
 

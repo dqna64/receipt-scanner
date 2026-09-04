@@ -1,0 +1,9 @@
+build/
+vcpkg_installed/
+vcpkg/buildtrees/
+vcpkg/downloads/
+vcpkg/packages/
+vcpkg/installed/
+.env
+compile_commands.json
+.DS_Store

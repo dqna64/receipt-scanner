@@ -6,6 +6,7 @@ Daily record of work done. Newest day first. Companion to `spec.md` (what/why) a
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-09-03 | (remote-control session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-09-02 | (remote-control session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-07-18 | (background session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-07-14 | e30f2afc-c5c5-4df0-8511-2f8b23a1539f | Claude | /Users/gordonh/receipt-scanner | MacBook-Pro-4.local |
@@ -14,6 +15,15 @@ Daily record of work done. Newest day first. Companion to `spec.md` (what/why) a
 | 2026-07-09 | cfefe238-3b8b-451c-93fe-f6aab5c18730 | Claude | /Users/me/receipt-scanner | motorway1.local |
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
+
+## 2026-09-03
+
+**Done (Step 1: repo scaffold + hello Drogon — implemented, not yet committed).**
+- vcpkg added as a git submodule (pinned commit, manifest mode via vcpkg.json — Drogon[postgres], nlohmann-json, Catch2) rather than a system install, for reproducibility across machines/CI.
+- CMakeLists.txt (C++20, warnings-as-errors), `GET /api/v1/health` (HealthController, {"status":"ok"}), Catch2 v3 wired with CTest via `catch_discover_tests`, .clang-format (Google-based) + .clang-tidy, .githooks/pre-push (build+test gate), README.
+- First build compiled Drogon from source (~8 min on this Mac, well under the 30-60 min budgeted) — clean, no Apple-clang C++20 issues encountered (the coroutine-support risk flagged 2026-09-02 didn't bite at this step; Drogon itself uses coroutines internally, so this is a decent signal, though nothing in this project's own code exercises `co_await` yet — that's Step 4).
+- **Real bug caught and fixed:** initial main.cpp explicitly called `registerController()` for HealthController, which failed a static_assert — Drogon's `METHOD_LIST_BEGIN`-style controllers are `isAutoCreation=true` and self-register via a static initializer in their own translation unit; manual registration is disallowed for them. Removing the manual call reintroduced the exact risk the manual call was meant to guard against (a STATIC library linker drops an unreferenced .o, silently dropping the registration). Fixed properly: `receipt_scanner_lib` changed from a STATIC to an OBJECT library — CMake links all objects from an OBJECT library into a consumer unconditionally, no pruning. Verified end-to-end: built, ctest passed, ran the server, curled `/api/v1/health`, got 200 `{"status":"ok"}`.
+- Not committed yet — in the working tree per the review gate, pending your read of the diff.
 
 ## 2026-09-02
 

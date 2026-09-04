@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Build + run tests before every push. Install once: git config core.hooksPath .githooks
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+build_dir="$repo_root/build"
+
+cmake -S "$repo_root" -B "$build_dir" -DCMAKE_TOOLCHAIN_FILE="$repo_root/vcpkg/scripts/buildsystems/vcpkg.cmake" >/dev/null
+cmake --build "$build_dir" -j
+ctest --test-dir "$build_dir" --output-on-failure
+
+echo "pre-push: build + tests passed"

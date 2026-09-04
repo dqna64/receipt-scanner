@@ -6,14 +6,14 @@ Companion to `spec.md` (the what/why). This is the how/when. Built in small step
 
 Near-term actionable items only — the full step sequence is below.
 
-- [ ] Create GitHub private repo; `git init` + first push (spec.md, plan.md, log.md)
-- [ ] Anthropic API key (needed by Step 11, cheap to grab now)
+- [x] Create GitHub private repo; `git init` + push (origin: dqna64/receipt-scanner) — confirmed 2026-09-02, local currently 1 commit ahead (spec round 4), needs a push
+- [ ] Anthropic API key (needed by Step 11, cheap to grab now) — not in this machine's env yet
 - [ ] Buy/choose domain for the VPS (needed by Step 18)
 - [ ] Pick VPS provider (needed by Step 18)
 - [ ] Offsite backup target account, B2 or similar (needed by Step 18)
 - [ ] Decide email infrastructure for open signup (provider: self-hosted SMTP vs SES/Postmark/Resend; and whether email verification + password reset gate the M1 public launch) — needed by Step 5 if gating, else a fast-follow (spec Open Eng Decisions)
-- [ ] START COLLECTING GOLDEN-SET RECEIPTS — photograph every receipt from normal shopping from now on; need 20-30 varied (faded thermal, crumpled, long dockets, glare). Runs in parallel with everything.
-- [ ] Step 1 (below): repo scaffold — CMake + vcpkg, hello Drogon `GET /api/v1/health`, Catch2 wired, clang-format/clang-tidy, README
+- [ ] START COLLECTING GOLDEN-SET RECEIPTS — photograph every receipt from normal shopping from now on; need 20-30 varied (faded thermal, crumpled, long dockets, glare) PLUS a few multi-image and payslip fixtures (spec round 4). Runs in parallel with everything.
+- [ ] Step 1 (below): repo scaffold — CMake + vcpkg (not yet installed on this machine — confirmed 2026-09-02), hello Drogon `GET /api/v1/health`, Catch2 wired, clang-format (present)/clang-tidy (not yet installed), README. Open risk to verify early: Apple clang 14.0.3 (confirmed installed) is the local toolchain — its C++20 coroutine support should be spot-checked in Step 1 before building on top of it, not assumed.
 
 ## Working agreement
 

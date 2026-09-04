@@ -20,17 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
-# Don't COPY the host's vcpkg/ submodule checkout: its .git is a gitlink pointing into the
-# superproject's .git/modules/vcpkg (excluded from the build context, and fragile even if
-# it weren't), which breaks vcpkg's internal baseline lookups. Clone it fresh instead,
-# pinned to the exact commit the submodule pins (keep in sync with vcpkg.json's
-# builtin-baseline and `git -C vcpkg rev-parse HEAD` on the host).
-ARG VCPKG_COMMIT=30ef65cad98f08e7197c9a1656fbd871bcb72f2d
-RUN git init /src/vcpkg \
-    && git -C /src/vcpkg remote add origin https://github.com/microsoft/vcpkg.git \
-    && git -C /src/vcpkg fetch --depth 1 origin "$VCPKG_COMMIT" \
-    && git -C /src/vcpkg checkout FETCH_HEAD \
-    && /src/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+# See scripts/fetch-vcpkg.sh for why this doesn't just COPY the host's vcpkg/ submodule
+# checkout (also used by CI, so the fetch logic is single-sourced there, not duplicated here).
+COPY scripts/fetch-vcpkg.sh scripts/fetch-vcpkg.sh
+RUN ./scripts/fetch-vcpkg.sh /src/vcpkg
 
 COPY . .
 

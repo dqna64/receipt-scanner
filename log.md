@@ -19,6 +19,14 @@ A context-compaction continuation gets a NEW session id — the 2026-07-11 row c
 
 ## 2026-09-05
 
+**Done (Steps 1 & 2 committed + pushed; Step 3: CI implemented, pending Actions run verification).**
+- Steps 1 (`0e7dbe2`) and 2 (`fe75c58`) re-verified fully end-to-end (rebuild, tests, health endpoint; docker compose up -> 4/4 healthy -> curl through Caddy -> 200 -> down) before committing, per request.
+- **Refactor before Step 3:** extracted the vcpkg-fetch logic (git init + shallow fetch of the pinned commit + bootstrap, see Step 2's 2026-09-05 entry for why) out of the Dockerfile into `scripts/fetch-vcpkg.sh` — CI needs the identical logic and copy-pasting it a third time (vcpkg.json's builtin-baseline is already one source of truth for the commit) would've left three places to keep in sync instead of two. Dockerfile now COPYs and runs the script. Verified: script runs standalone, and the rebuilt Docker image still works (rebuild dropped to 34s thanks to the Step 2 cache mount, confirming the mount + refactor compose correctly).
+- Step 3: `.github/workflows/ci.yml` — three jobs: `build-test` (x86_64 Release build + ctest), `sanitizers` (separate Debug build with ASan/UBSan via CMAKE_CXX_FLAGS — applies only to our own translation units, vcpkg's prebuilt static libs are unaffected, which is the pragmatic scope for what this project's own code needs covered), `docker-amd64` (build-only, proves the amd64 deploy image builds in CI — the only place it's ever produced, per spec — pushing it is Step 18). vcpkg binary cache via `actions/cache` keyed on the fetch script + vcpkg.json hash, with a manual `VCPKG_CACHE_VERSION` escape hatch.
+- Not yet verified green — GitHub Actions can only really be tested by an actual push; committing + pushing next, then watching the run.
+
+## 2026-09-05 (earlier)
+
 **Done (Step 1 committed + pushed; Step 2: Docker + Compose implemented, not yet committed).**
 - Step 1 committed (`0e7dbe2`) and pushed to `origin/main` after user review; the `pre-push` hook ran build+tests for real on push and passed.
 - Step 2: multi-stage Dockerfile (Debian bookworm build stage → bookworm-slim runtime), docker-compose.yml (app + postgres + minio + caddy), Caddyfile, `.env.example`/`.env`, `.dockerignore`.

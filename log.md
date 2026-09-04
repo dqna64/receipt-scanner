@@ -6,6 +6,7 @@ Daily record of work done. Newest day first. Companion to `spec.md` (what/why) a
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-09-05 | (remote-control session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-09-03 | (remote-control session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-09-02 | (remote-control session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-07-18 | (background session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
@@ -15,6 +16,20 @@ Daily record of work done. Newest day first. Companion to `spec.md` (what/why) a
 | 2026-07-09 | cfefe238-3b8b-451c-93fe-f6aab5c18730 | Claude | /Users/me/receipt-scanner | motorway1.local |
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
+
+## 2026-09-05
+
+**Done (Step 1 committed + pushed; Step 2: Docker + Compose implemented, not yet committed).**
+- Step 1 committed (`0e7dbe2`) and pushed to `origin/main` after user review; the `pre-push` hook ran build+tests for real on push and passed.
+- Step 2: multi-stage Dockerfile (Debian bookworm build stage → bookworm-slim runtime), docker-compose.yml (app + postgres + minio + caddy), Caddyfile, `.env.example`/`.env`, `.dockerignore`.
+- **Three real bugs found and fixed via actual `docker build`/`docker compose up` runs (Docker Desktop wasn't even running at first — started it), not just plausible-looking Dockerfile authorship:**
+  1. **vcpkg submodule broke inside the build context.** Initial approach `COPY`'d the host's `vcpkg/` submodule checkout in; its `.git` is a gitlink file pointing at the superproject's `.git/modules/vcpkg`, which is outside the Docker build context (and excluded via `.dockerignore` regardless) — vcpkg's baseline-version git lookups failed with "not a git repository". Fixed by NOT copying the host's checkout at all: the Dockerfile now does a fresh `git init` + shallow `fetch --depth 1` of the exact pinned commit, inside the image. `.dockerignore` now excludes `vcpkg/` entirely.
+  2. **libpq (built from source by vcpkg on Linux) needs `bison`/`flex`/`perl`**, not obvious from the spec's macOS prereq list (which only needed autotools for libvips). Added to the Dockerfile's apt install list.
+  3. **Wrong assumption about Linux linking.** The Dockerfile originally assumed vcpkg's Linux triplets (`arm64-linux`/`x64-linux`) link dynamically (true for most vcpkg platforms) and staged `.so` files into the runtime image — that copy step failed because there were none. Verified directly (extracted the built binary from the image, ran `ldd`): vcpkg's community Linux triplets default to STATIC linking, same as the osx triplets from Step 1. Simplified the runtime stage to just the binary — no libs to carry, no `ldconfig` needed. This actually makes the runtime image simpler and smaller than originally planned.
+- **Also added, not bugs but worth recording:** a BuildKit cache mount (`--mount=type=cache,target=/root/.cache/vcpkg/archives`) on the vcpkg install step — without it, every Dockerfile edit forced a full ~5-10 min recompile of Drogon from scratch (vcpkg's binary cache lives inside the throwaway build layer otherwise). This is the same problem Step 3's CI vcpkg caching solves, just hit locally first. Dropped a `-DVCPKG_BUILD_TYPE=release` flag that turned out to be a silent no-op (harmless CMake "unused variable" warning) rather than leave a misleading comment.
+- MinIO's official image ships no shell/curl/mc, so its Compose healthcheck (initially `mc ready local`) was unusable — removed; `app`'s `depends_on: minio` is start-order only (`condition: service_started`), not readiness-gated. Postgres keeps a real healthcheck (`pg_isready`, confirmed present in the official image).
+- Verified end-to-end: `docker compose up` → 4/4 services up, app + postgres healthy, `curl localhost:8080/api/v1/health` through Caddy → `200 {"status":"ok"}`. Torn down after verification (`docker compose down`).
+- Not committed yet — in the working tree per the review gate.
 
 ## 2026-09-03
 

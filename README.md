@@ -47,6 +47,22 @@ ctest --test-dir build --output-on-failure
 curl localhost:8080/api/v1/health
 ```
 
+## Docker / Compose (dev environment)
+
+```
+cp .env.example .env   # first time only
+docker compose up -d
+curl localhost:8080/api/v1/health   # through Caddy
+docker compose down
+```
+
+Brings up app + Postgres + MinIO + Caddy. Postgres (`5432`) and MinIO (`9000`/`9001`) are
+mapped to the host for dev convenience (psql, mc, the MinIO console); only Caddy (`8080`)
+fronts the app, matching the eventual production posture even in dev. The app image builds
+fresh from source inside Docker (vcpkg is cloned there directly, not copied from the host
+submodule checkout — see the Dockerfile comment) — first build takes ~5-10 min, same as the
+native build; a BuildKit cache mount keeps subsequent builds fast even after Dockerfile edits.
+
 ## Dual-architecture
 
 Everything must build on arm64 (macOS dev, this machine) and x86_64 (Linux VPS, CI only).

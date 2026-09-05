@@ -1,6 +1,7 @@
 #pragma once
 
 #include <drogon/HttpController.h>
+#include <drogon/utils/coroutine.h>
 
 namespace receipt_scanner {
 
@@ -10,8 +11,8 @@ public:
   ADD_METHOD_TO(HealthController::health, "/api/v1/health", drogon::Get);
   METHOD_LIST_END
 
-  void health(const drogon::HttpRequestPtr &req,
-              std::function<void(const drogon::HttpResponsePtr &)> &&callback);
+  drogon::Task<> health(drogon::HttpRequestPtr req,
+                         std::function<void(const drogon::HttpResponsePtr &)> callback);
 };
 
 } // namespace receipt_scanner

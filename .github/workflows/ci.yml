@@ -16,6 +16,27 @@ jobs:
   build-test:
     name: Build + test (x86_64)
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: receipt_scanner
+          POSTGRES_PASSWORD: dev_only_change_me
+          POSTGRES_DB: receipt_scanner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: receipt_scanner
+      DB_USER: receipt_scanner
+      DB_PASSWORD: dev_only_change_me
+      DATABASE_URL: postgres://receipt_scanner:dev_only_change_me@localhost:5432/receipt_scanner?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +47,14 @@ jobs:
             build-essential cmake curl zip unzip tar git pkg-config \
             autoconf autoconf-archive automake libtool python3 \
             bison flex perl
+
+      - name: Install dbmate
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          sudo chmod +x /usr/local/bin/dbmate
+
+      - name: Run migrations
+        run: dbmate up
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4
@@ -53,6 +82,27 @@ jobs:
   sanitizers:
     name: ASan/UBSan (x86_64)
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: receipt_scanner
+          POSTGRES_PASSWORD: dev_only_change_me
+          POSTGRES_DB: receipt_scanner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: receipt_scanner
+      DB_USER: receipt_scanner
+      DB_PASSWORD: dev_only_change_me
+      DATABASE_URL: postgres://receipt_scanner:dev_only_change_me@localhost:5432/receipt_scanner?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +113,14 @@ jobs:
             build-essential cmake curl zip unzip tar git pkg-config \
             autoconf autoconf-archive automake libtool python3 \
             bison flex perl
+
+      - name: Install dbmate
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          sudo chmod +x /usr/local/bin/dbmate
+
+      - name: Run migrations
+        run: dbmate up
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4

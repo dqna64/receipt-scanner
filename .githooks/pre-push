@@ -5,6 +5,22 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 build_dir="$repo_root/build"
 
+# Since Step 4, the test suite includes DB integration tests -- load .env so DB_* vars are
+# set without relying on the caller's shell, and fail fast with a clear message if Postgres
+# (docker compose up -d postgres) isn't reachable, rather than a slow, confusing timeout.
+if [ -f "$repo_root/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$repo_root/.env"
+  set +a
+fi
+# Plain bash TCP check (no extra host dependency like pg_isready/psql -- just a port probe).
+if ! (exec 3<>"/dev/tcp/${DB_HOST:-localhost}/${DB_PORT:-5432}") 2>/dev/null; then
+  echo "pre-push: Postgres not reachable at ${DB_HOST:-localhost}:${DB_PORT:-5432} -- run 'docker compose up -d postgres' first" >&2
+  exit 1
+fi
+exec 3<&- 3>&- 2>/dev/null || true
+
 cmake -S "$repo_root" -B "$build_dir" -DCMAKE_TOOLCHAIN_FILE="$repo_root/vcpkg/scripts/buildsystems/vcpkg.cmake" >/dev/null
 cmake --build "$build_dir" -j
 ctest --test-dir "$build_dir" --output-on-failure

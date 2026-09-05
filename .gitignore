@@ -7,3 +7,4 @@ vcpkg/installed/
 .env
 compile_commands.json
 .DS_Store
+uploads/

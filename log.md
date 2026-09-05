@@ -38,7 +38,7 @@ A context-compaction continuation gets a NEW session id — the 2026-07-11 row c
 - **CI updated for real infra, not mocked.** Both `build-test` and `sanitizers` jobs gained a Postgres 16 service container + a `dbmate up` step before `ctest`, matching the spec's "integration tests against real Postgres" testing philosophy — a service container is the GitHub Actions equivalent of what Compose gives local dev.
 - **Pre-push hook hardened.** Now loads `.env` itself (so DB_* vars are set without relying on the caller's shell already having them exported) and does a plain bash `/dev/tcp` reachability check on Postgres before building, failing fast with a clear message ("run docker compose up -d postgres first") instead of a slow, confusing hang/timeout if Postgres isn't running. Verified both the pass and fail paths.
 - Docker image rebuilt and the full Compose stack re-verified end-to-end with real DB connectivity (health endpoint now genuinely reports `db:ok` through Caddy, not just app liveness).
-- Not committed yet — in the working tree per the review gate.
+- Committed (`91201f6`) and pushed. CI confirmed fully green (all three jobs, incl. the new Postgres service + dbmate migration step in build-test and sanitizers, working on the first try) — run 33980525751.
 
 ## 2026-09-05 (earlier)
 

@@ -11,6 +11,14 @@ endif()
 
 add_compile_options(-Wall -Wextra -Werror)
 
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  # GCC 12 on x86_64 has a known false-positive -Wrestrict in libstdc++'s char_traits.h at
+  # -O2 (an optimizer/value-range diagnostic bug, not a real issue in our code) -- observed
+  # in CI (x86_64) but not on macOS/clang or arm64 Docker, both GCC-free or arm64-codegen.
+  # Keep it a warning, not a hard error, rather than disabling -Werror project-wide.
+  add_compile_options(-Wno-error=restrict)
+endif()
+
 find_package(Drogon CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 

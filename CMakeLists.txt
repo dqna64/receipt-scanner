@@ -21,15 +21,22 @@ endif()
 
 find_package(Drogon CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(unofficial-sodium CONFIG REQUIRED)
 
 # OBJECT (not STATIC): Drogon controllers self-register via static initializers in their
 # own translation unit. A STATIC library's linker would drop an .o nothing else references
 # (which is every controller, by design) instead of pulling it into the final binary.
 add_library(receipt_scanner_lib OBJECT
   src/controllers/HealthController.cpp
+  src/controllers/AuthController.cpp
+  src/auth/SodiumInit.cpp
+  src/auth/PasswordHasher.cpp
+  src/auth/TokenUtils.cpp
+  src/auth/AuthService.cpp
+  src/filters/SessionAuthFilter.cpp
 )
 target_include_directories(receipt_scanner_lib PUBLIC src)
-target_link_libraries(receipt_scanner_lib PUBLIC Drogon::Drogon nlohmann_json::nlohmann_json)
+target_link_libraries(receipt_scanner_lib PUBLIC Drogon::Drogon nlohmann_json::nlohmann_json unofficial-sodium::sodium)
 
 add_executable(receipt_scanner_server src/main.cpp)
 target_link_libraries(receipt_scanner_server PRIVATE receipt_scanner_lib)

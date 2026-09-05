@@ -62,6 +62,20 @@ a reachable Postgres before building and fails fast with a clear message if it i
 curl localhost:8080/api/v1/health
 ```
 
+## Auth (Step 5)
+
+```
+./build/receipt_scanner_server &
+./scripts/smoke-test-auth.sh                    # against the native binary, localhost:8080
+./scripts/smoke-test-auth.sh http://localhost:8080   # same script also works through Docker/Caddy
+```
+
+Open self-service registration (`POST /api/v1/auth/register`), login/logout, password
+reset, and email verification. No email provider is wired up yet (spec Open Eng
+Decisions) — verification/reset tokens are always created but only logged (`EMAIL_ENABLED=false`
+by default), never actually sent. See `.env.example` for the auth-related config knobs
+(session sliding-expiry touch interval, rate limits, cookie Secure flag).
+
 ## Docker / Compose (dev environment)
 
 ```

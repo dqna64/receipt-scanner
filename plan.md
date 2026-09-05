@@ -11,14 +11,15 @@ Near-term actionable items only — the full step sequence is below.
 - [x] Step 2: Docker + Compose — done, committed, pushed, CI green
 - [x] Step 3: CI — done; found + fixed a real GCC 12 x86_64 false-positive `-Wrestrict` bug in the process
 - [x] Step 4: Schema + async DB — done; full schema + 5 layered views verified against the Invariants truth table via a real coroutine integration test, `dbmate up/down` clean
+- [x] Step 5: Register/login/logout + session filter — done; open self-service registration with per-user seeding (22 categories + cash) in one transaction, argon2 password hashing, sliding-expiry sessions, a coroutine session filter, per-IP+per-account rate limiting, password reset (invalidates all sessions) + email verification (both scaffolded, sending gated off pending the email-infra decision). 10 Catch2 integration tests + a committed curl smoke-test script (`scripts/smoke-test-auth.sh`), verified against the native binary AND the full Docker stack through Caddy.
 - [ ] KNOWN LIMITATION (found during Step 4 verification, not yet fixed): when Postgres is completely unreachable at startup, the app stops accepting HTTP connections entirely during the DB-connection retry storm, rather than staying up and returning a graceful `degraded` health response. Worth hardening before Step 18 (production), not urgent now — revisit around Step 10 (worker resilience) or Step 18 (deploy).
 - [ ] Anthropic API key (needed by Step 11, cheap to grab now) — not in this machine's env yet
 - [ ] Buy/choose domain for the VPS (needed by Step 18)
 - [ ] Pick VPS provider (needed by Step 18)
 - [ ] Offsite backup target account, B2 or similar (needed by Step 18)
-- [ ] Decide email infrastructure for open signup (provider: self-hosted SMTP vs SES/Postmark/Resend; and whether email verification + password reset gate the M1 public launch) — needed by Step 5 if gating, else a fast-follow (spec Open Eng Decisions)
+- [ ] Decide email infrastructure for open signup (provider: self-hosted SMTP vs SES/Postmark/Resend; and whether email verification + password reset gate the M1 public launch) — Step 5 scaffolded the token flow with sending gated behind EMAIL_ENABLED=false, so this no longer blocks anything; still needed before public launch (spec Open Eng Decisions)
 - [ ] START COLLECTING GOLDEN-SET RECEIPTS — photograph every receipt from normal shopping from now on; need 20-30 varied (faded thermal, crumpled, long dockets, glare) PLUS a few multi-image and payslip fixtures (spec round 4). Runs in parallel with everything.
-- [ ] Step 5 (below): register/login/logout + session filter (multi-tenant, open signup)
+- [ ] Step 6 (below): SigV4 + ImageStore
 
 ## Working agreement
 

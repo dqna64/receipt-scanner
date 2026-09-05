@@ -1,14 +1,26 @@
+#include "auth/SodiumInit.h"
 #include "config/Env.h"
 
 #include <drogon/drogon.h>
 #include <drogon/orm/DbConfig.h>
 
-// HealthController (METHOD_LIST_BEGIN/END) self-registers via static initialization in
-// its own translation unit — see CMakeLists.txt for why receipt_scanner_lib is an OBJECT
-// library (a STATIC library would let the linker drop that unreferenced .o entirely).
+#include <cstdio>
+
+// HealthController/AuthController (METHOD_LIST_BEGIN/END) self-register via static
+// initialization in their own translation units — see CMakeLists.txt for why
+// receipt_scanner_lib is an OBJECT library (a STATIC library would let the linker drop
+// those unreferenced .o files entirely).
 
 int main() {
   using receipt_scanner::config::envOr;
+
+  // stdout is fully-buffered (not line-buffered) whenever it isn't a TTY -- i.e. always,
+  // once this runs under Docker/CI/nohup. Without this, log lines (including the
+  // EMAIL_ENABLED=false verification/reset token logs) can sit invisible in a buffer
+  // indefinitely instead of reaching `docker logs`/a redirected file promptly.
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+
+  receipt_scanner::auth::ensureSodiumInitialized();
 
   drogon::orm::PostgresConfig dbConfig{
       .host = envOr("DB_HOST", "localhost"),

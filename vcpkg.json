@@ -8,6 +8,7 @@
       "features": ["postgres"]
     },
     "nlohmann-json",
-    "catch2"
+    "catch2",
+    "libsodium"
   ]
 }

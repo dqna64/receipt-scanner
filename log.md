@@ -35,7 +35,7 @@ A context-compaction continuation gets a NEW session id — the 2026-07-11 row c
 - 4 new Catch2 tests: 2 for `Sigv4Signer` (the reference-signature match, plus a sanity check that different payloads produce different signatures), 2 for `S3ImageStore` against real Compose MinIO (full put/get/delete round-trip incl. confirming a deleted object 404s; independent round-trips of multiple keys/content-types). Full suite now 14 tests, all green, run multiple times for stability.
 - CI needed a MinIO instance for the new tests: GitHub Actions' `services:` block has no way to override a container's command, and `minio/minio` needs `server /data` args to actually start serving (it isn't the image's default CMD) — worked around with a plain `docker run -d` step instead of `services:`, polling `/minio/health/live` before proceeding. Added to both `build-test` and `sanitizers` jobs, alongside the existing Postgres service.
 - Not wired into `main.cpp` / the running server yet — there's no consumer until Step 8's upload endpoint. Config added to `.env.example`/`docker-compose.yml`: `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_PATH_STYLE`.
-- Not committed yet — in the working tree per the review gate.
+- Committed (`8e5af5f`, plus a pre-push hook fix in `2d0a235`) and pushed. CI confirmed fully green (all three jobs, incl. the new `docker run`-based MinIO setup in build-test and sanitizers, and the SigV4/ImageStore tests) — run 34015009590.
 
 ## 2026-09-06 (Step 5, continuing the session)
 

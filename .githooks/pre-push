@@ -5,21 +5,31 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 build_dir="$repo_root/build"
 
-# Since Step 4, the test suite includes DB integration tests -- load .env so DB_* vars are
-# set without relying on the caller's shell, and fail fast with a clear message if Postgres
-# (docker compose up -d postgres) isn't reachable, rather than a slow, confusing timeout.
+# Since Step 4 (DB) and Step 6 (object storage), the test suite needs real infra -- load
+# .env so DB_*/S3_* vars are set without relying on the caller's shell, and fail fast with a
+# clear message if either is unreachable, rather than a slow, confusing timeout/hang.
 if [ -f "$repo_root/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   source "$repo_root/.env"
   set +a
 fi
-# Plain bash TCP check (no extra host dependency like pg_isready/psql -- just a port probe).
-if ! (exec 3<>"/dev/tcp/${DB_HOST:-localhost}/${DB_PORT:-5432}") 2>/dev/null; then
-  echo "pre-push: Postgres not reachable at ${DB_HOST:-localhost}:${DB_PORT:-5432} -- run 'docker compose up -d postgres' first" >&2
-  exit 1
-fi
-exec 3<&- 3>&- 2>/dev/null || true
+
+# Check the Compose service itself, not a raw TCP probe: macOS ships bash 3.2, whose
+# /dev/tcp support turned out unreliable in practice (a bash-3.2-on-this-machine TCP check
+# silently killed this whole script even for a genuinely-reachable Postgres -- no error, no
+# hang, just gone). Asking `docker compose` what's actually running sidesteps bash-version
+# quirks entirely and checks the thing we actually care about.
+check_running() {
+  local service=$1 hint=$2
+  if ! docker compose -f "$repo_root/docker-compose.yml" ps --status running --services 2>/dev/null | grep -qx "$service"; then
+    echo "pre-push: $service is not running -- run '$hint' first" >&2
+    exit 1
+  fi
+}
+
+check_running postgres "docker compose up -d postgres"
+check_running minio "docker compose up -d minio"
 
 cmake -S "$repo_root" -B "$build_dir" -DCMAKE_TOOLCHAIN_FILE="$repo_root/vcpkg/scripts/buildsystems/vcpkg.cmake" >/dev/null
 cmake --build "$build_dir" -j

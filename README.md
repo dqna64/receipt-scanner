@@ -76,6 +76,19 @@ Decisions) — verification/reset tokens are always created but only logged (`EM
 by default), never actually sent. See `.env.example` for the auth-related config knobs
 (session sliding-expiry touch interval, rate limits, cookie Secure flag).
 
+## Object storage (Step 6)
+
+```
+docker compose up -d minio
+ctest --test-dir build -R image_store --output-on-failure
+```
+
+`ImageStore` (S3-compatible: MinIO today, AWS S3/R2/B2 later with only a config change) and
+its hand-rolled SigV4 signer. The SigV4 algorithm itself is unit-tested against an
+independently-computed reference signature (`tests/sigv4_test.cpp`); `tests/image_store_test.cpp`
+round-trips real bytes against MinIO. Not wired into the running server yet — that's Step 8
+(upload).
+
 ## Docker / Compose (dev environment)
 
 ```

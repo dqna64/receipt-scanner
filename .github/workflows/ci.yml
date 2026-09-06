@@ -37,6 +37,12 @@ jobs:
       DB_USER: receipt_scanner
       DB_PASSWORD: dev_only_change_me
       DATABASE_URL: postgres://receipt_scanner:dev_only_change_me@localhost:5432/receipt_scanner?sslmode=disable
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: receipts
+      S3_ACCESS_KEY: receipt_scanner
+      S3_SECRET_KEY: dev_only_change_me
+      S3_PATH_STYLE: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +61,20 @@ jobs:
 
       - name: Run migrations
         run: dbmate up
+
+      # Not a `services:` container: that block has no way to override the image's command,
+      # and minio/minio needs `server /data` args to actually run (spec Step 6 -- same
+      # command as docker-compose.yml's minio service). A plain `docker run` gives full
+      # control, matching Compose exactly.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=receipt_scanner -e MINIO_ROOT_PASSWORD=dev_only_change_me \
+            minio/minio server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4
@@ -103,6 +123,12 @@ jobs:
       DB_USER: receipt_scanner
       DB_PASSWORD: dev_only_change_me
       DATABASE_URL: postgres://receipt_scanner:dev_only_change_me@localhost:5432/receipt_scanner?sslmode=disable
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: receipts
+      S3_ACCESS_KEY: receipt_scanner
+      S3_SECRET_KEY: dev_only_change_me
+      S3_PATH_STYLE: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -121,6 +147,16 @@ jobs:
 
       - name: Run migrations
         run: dbmate up
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=receipt_scanner -e MINIO_ROOT_PASSWORD=dev_only_change_me \
+            minio/minio server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4

@@ -18,8 +18,9 @@ Near-term actionable items only — the full step sequence is below.
 - [ ] Pick VPS provider (needed by Step 18)
 - [ ] Offsite backup target account, B2 or similar (needed by Step 18)
 - [ ] Decide email infrastructure for open signup (provider: self-hosted SMTP vs SES/Postmark/Resend; and whether email verification + password reset gate the M1 public launch) — Step 5 scaffolded the token flow with sending gated behind EMAIL_ENABLED=false, so this no longer blocks anything; still needed before public launch (spec Open Eng Decisions)
+- [x] Step 6: SigV4 + ImageStore — done; hand-rolled SigV4 (`Sigv4Signer`) verified byte-for-byte against an independently-computed Python/hashlib reference signature, not just self-consistency; `S3ImageStore` (Put/Get/Delete) round-trips real bytes against Compose MinIO. Real bug found: `HttpClient` silently hangs forever with nothing sent on the wire if constructed without a running `trantor::EventLoop` (the nullptr default expects `drogon::app().run()` to already be driving it) — fixed by accepting an explicit loop, tests use `trantor::EventLoopThread`. CI needed a MinIO instance too — GitHub Actions' `services:` block can't override a container's command (MinIO needs `server /data`), so it's started via a plain `docker run` step instead. Not wired into main.cpp yet — no consumer until Step 8 (upload).
 - [ ] START COLLECTING GOLDEN-SET RECEIPTS — photograph every receipt from normal shopping from now on; need 20-30 varied (faded thermal, crumpled, long dockets, glare) PLUS a few multi-image and payslip fixtures (spec round 4). Runs in parallel with everything.
-- [ ] Step 6 (below): SigV4 + ImageStore
+- [ ] Step 7 (below): Image normalization
 
 ## Working agreement
 

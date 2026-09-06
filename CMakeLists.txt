@@ -34,6 +34,8 @@ add_library(receipt_scanner_lib OBJECT
   src/auth/TokenUtils.cpp
   src/auth/AuthService.cpp
   src/filters/SessionAuthFilter.cpp
+  src/storage/Sigv4Signer.cpp
+  src/storage/S3ImageStore.cpp
 )
 target_include_directories(receipt_scanner_lib PUBLIC src)
 target_link_libraries(receipt_scanner_lib PUBLIC Drogon::Drogon nlohmann_json::nlohmann_json unofficial-sodium::sodium)

@@ -41,7 +41,7 @@ A context-compaction continuation gets a NEW session id — the 2026-07-11 row c
 - Docker image rebuilt for Linux (fresh libvips compile there too, ~12.5 min, same dependency chain) — verified via `ldd` that the binary still links only standard system libs (libvips statically linked in, same static-linking behavior confirmed for every other vcpkg dependency since Step 2); full Compose stack brought up and health-checked through Caddy.
 - CI needs no changes: its existing build-prerequisites package list already exactly matches the Dockerfile's, which just proved sufficient for libvips/glib/meson to build on Debian.
 - Not wired into `main.cpp` / the running server yet — no consumer until Step 8's upload endpoint.
-- Not committed yet — in the working tree per the review gate.
+- Committed (`8188801`) and pushed. CI confirmed fully green (all three jobs) — run 34249935646. `docker-amd64` took notably longer than prior steps (21m21s vs the usual 7-12 min): confirmed via the job API mid-run that it wasn't stuck (the `docker/build-push-action` step was continuously active, runner alive, no error state) — just a genuinely slow cold compile of libvips + its full dependency chain on GitHub's runners, which are slower per-core than this Mac for CPU-bound builds. Worth knowing as a baseline: any future Docker build touching this dependency chain from a cold cache will run ~20+ min, not the ~10 min every other step has trained us to expect.
 
 ## 2026-09-06 (Step 6, continuing the session)
 

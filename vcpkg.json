@@ -9,6 +9,10 @@
     },
     "nlohmann-json",
     "catch2",
-    "libsodium"
+    "libsodium",
+    {
+      "name": "libvips",
+      "features": ["jpeg", "png", "webp", "exif", "cplusplus"]
+    }
   ]
 }

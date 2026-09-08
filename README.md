@@ -89,6 +89,21 @@ independently-computed reference signature (`tests/sigv4_test.cpp`); `tests/imag
 round-trips real bytes against MinIO. Not wired into the running server yet — that's Step 8
 (upload).
 
+## Image normalization (Step 7)
+
+```
+ctest --test-dir build -R image_normalizer --output-on-failure
+```
+
+`ImageNormalizer`: libvips pipeline (decode -> EXIF-orient -> strip ALL metadata -> downscale
+to 2048px long edge, never upscale -> encode WebP q80), running on its own
+`trantor::EventLoopThreadPool` and bridged back to the caller's coroutine via
+`drogon::queueInLoopCoro` -- the CPU-bound work never runs on a Drogon IO loop. Test fixtures
+(`tests/fixtures/`) are real images generated once with Pillow (rotated w/ EXIF orientation
+tag, GPS-embedded, oversized, undersized) -- tests assert on actual decoded pixel content and
+metadata field names, not just byte counts. Not wired into the running server yet -- that's
+Step 8 (upload).
+
 ## Docker / Compose (dev environment)
 
 ```

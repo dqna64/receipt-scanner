@@ -23,6 +23,12 @@ find_package(Drogon CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 
+# libvips ships only a pkg-config file, no CMake package config -- pkg_check_modules is the
+# standard way to consume it. The vcpkg toolchain file points pkg-config at vcpkg's installed
+# tree automatically, so this resolves the vcpkg-built libvips, not any system copy.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(VIPS REQUIRED IMPORTED_TARGET vips-cpp)
+
 # OBJECT (not STATIC): Drogon controllers self-register via static initializers in their
 # own translation unit. A STATIC library's linker would drop an .o nothing else references
 # (which is every controller, by design) instead of pulling it into the final binary.
@@ -36,9 +42,12 @@ add_library(receipt_scanner_lib OBJECT
   src/filters/SessionAuthFilter.cpp
   src/storage/Sigv4Signer.cpp
   src/storage/S3ImageStore.cpp
+  src/storage/VipsInit.cpp
+  src/storage/ImageNormalizer.cpp
 )
 target_include_directories(receipt_scanner_lib PUBLIC src)
-target_link_libraries(receipt_scanner_lib PUBLIC Drogon::Drogon nlohmann_json::nlohmann_json unofficial-sodium::sodium)
+target_link_libraries(receipt_scanner_lib PUBLIC
+  Drogon::Drogon nlohmann_json::nlohmann_json unofficial-sodium::sodium PkgConfig::VIPS)
 
 add_executable(receipt_scanner_server src/main.cpp)
 target_link_libraries(receipt_scanner_server PRIVATE receipt_scanner_lib)

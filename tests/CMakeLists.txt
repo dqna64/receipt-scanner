@@ -7,6 +7,7 @@ add_executable(unit_tests
   sigv4_test.cpp
   image_store_test.cpp
   image_normalizer_test.cpp
+  receipt_test.cpp
 )
 target_link_libraries(unit_tests PRIVATE receipt_scanner_lib Catch2::Catch2WithMain)
 # Fixture images live in the source tree (tests/fixtures/), not the build dir -- this lets

@@ -86,8 +86,7 @@ ctest --test-dir build -R image_store --output-on-failure
 `ImageStore` (S3-compatible: MinIO today, AWS S3/R2/B2 later with only a config change) and
 its hand-rolled SigV4 signer. The SigV4 algorithm itself is unit-tested against an
 independently-computed reference signature (`tests/sigv4_test.cpp`); `tests/image_store_test.cpp`
-round-trips real bytes against MinIO. Not wired into the running server yet — that's Step 8
-(upload).
+round-trips real bytes against MinIO. Wired into the running server as of Step 8 (upload).
 
 ## Image normalization (Step 7)
 
@@ -101,8 +100,26 @@ to 2048px long edge, never upscale -> encode WebP q80), running on its own
 `drogon::queueInLoopCoro` -- the CPU-bound work never runs on a Drogon IO loop. Test fixtures
 (`tests/fixtures/`) are real images generated once with Pillow (rotated w/ EXIF orientation
 tag, GPS-embedded, oversized, undersized) -- tests assert on actual decoded pixel content and
-metadata field names, not just byte counts. Not wired into the running server yet -- that's
-Step 8 (upload).
+metadata field names, not just byte counts. Wired into the running server as of Step 8
+(upload).
+
+## Receipts: upload + image proxy (Step 8)
+
+```
+docker compose up -d postgres minio
+ctest --test-dir build -R receipt --output-on-failure
+```
+
+`POST /api/v1/receipts` (multipart, one or more `image` files -> normalize -> hash -> exact-dup
+409 unless `force=true` -> one receipt row + one `receipt_images` row per image, provisional
+`kind=purchase`/`direction=outflow` until Step 10's scanner reclassifies); `POST
+/api/v1/receipts/:id/images` (add images to any receipt, same dedup/cap rules); `GET
+/api/v1/receipts` (paginated list), `GET /api/v1/receipts/:id`, `GET
+/api/v1/receipts/:id/images`; `DELETE /api/v1/receipts/:id` (cascades to all stored images);
+`GET /api/v1/images/:id` (proxy, auth via the owning receipt, immutable cache headers). All
+routes are session-authed and ownership-scoped (missing/not-owned -> 404, never 403). Per-receipt
+image cap is `MAX_IMAGES_PER_RECEIPT` (default 8, see `.env.example`) -- enforced at add time
+only, bounds LLM vision cost on a rescan rather than storage.
 
 ## Docker / Compose (dev environment)
 

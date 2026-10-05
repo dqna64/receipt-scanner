@@ -44,6 +44,9 @@ add_library(receipt_scanner_lib OBJECT
   src/storage/S3ImageStore.cpp
   src/storage/VipsInit.cpp
   src/storage/ImageNormalizer.cpp
+  src/receipts/ReceiptService.cpp
+  src/receipts/AppServices.cpp
+  src/controllers/ReceiptController.cpp
 )
 target_include_directories(receipt_scanner_lib PUBLIC src)
 target_link_libraries(receipt_scanner_lib PUBLIC

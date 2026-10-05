@@ -62,15 +62,17 @@ jobs:
       - name: Run migrations
         run: dbmate up
 
-      # Not a `services:` container: that block has no way to override the image's command,
-      # and minio/minio needs `server /data` args to actually run (spec Step 6 -- same
-      # command as docker-compose.yml's minio service). A plain `docker run` gives full
-      # control, matching Compose exactly.
+      # The official minio/minio image was deleted from Docker Hub on 2026-09-11; see
+      # docker-compose.yml's minio service comment for the full story (bitnamilegacy/minio
+      # is the last free, anonymously-pullable mirror, pre-dates the CVE-2026-40344 fix,
+      # accepted for CI/dev only). Not a `services:` container: that block can't set
+      # MINIO_DEFAULT_BUCKETS the way a plain `docker run` can.
       - name: Start MinIO
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=receipt_scanner -e MINIO_ROOT_PASSWORD=dev_only_change_me \
-            minio/minio server /data
+            -e MINIO_DEFAULT_BUCKETS=receipts \
+            bitnamilegacy/minio:2025.7.23-debian-12-r5
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && break
             sleep 1
@@ -148,11 +150,14 @@ jobs:
       - name: Run migrations
         run: dbmate up
 
+      # See the build-test job's "Start MinIO" step comment -- same bitnamilegacy mirror,
+      # same accepted-for-CI-only CVE tradeoff.
       - name: Start MinIO
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=receipt_scanner -e MINIO_ROOT_PASSWORD=dev_only_change_me \
-            minio/minio server /data
+            -e MINIO_DEFAULT_BUCKETS=receipts \
+            bitnamilegacy/minio:2025.7.23-debian-12-r5
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && break
             sleep 1

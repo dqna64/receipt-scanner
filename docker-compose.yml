@@ -16,18 +16,32 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
+    # The official minio/minio image was deleted from Docker Hub entirely on 2026-09-11
+    # (MinIO wound down free container distribution). bitnamilegacy/minio is the last free,
+    # anonymously-pullable mirror, frozen at 2025-07-23 -- it predates the fix for
+    # CVE-2026-40344 (CVSS 8.8, Snowball auto-extract auth bypass; needs a valid access key
+    # to exploit, not reachable without one). Accepted for local dev/CI (ephemeral
+    # containers, access keys never exposed to the outside); MUST be revisited (self-built
+    # patched image, or a different store) before Step 18's real deploy.
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Bitnami-specific: auto-creates the bucket at startup. Nothing else in this project
+      # provisioned it before (tests had their own ensureBucketExists(), but a fresh
+      # `docker compose up` had no bucket until one was created manually) -- this closes
+      # that gap as a side effect of the image switch.
+      MINIO_DEFAULT_BUCKETS: ${S3_BUCKET:-receipts}
     volumes:
-      - minio_data:/data
+      - minio_data:/bitnami/minio/data
     ports:
       - "9000:9000" # dev convenience (mc/S3 clients); NOT routed through Caddy (see spec)
       - "9001:9001" # MinIO web console, dev only
-    # No healthcheck: the official minio/minio image ships no shell/curl/mc to probe with.
-    # app's own start-up (Step 6+) is what actually proves MinIO is reachable.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   app:
     build: .

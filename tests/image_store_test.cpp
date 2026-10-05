@@ -1,13 +1,13 @@
-#include "config/Env.h"
-#include "storage/S3ImageStore.h"
-#include "storage/Sigv4Signer.h"
-
-#include <catch2/catch_test_macros.hpp>
 #include <drogon/HttpClient.h>
 #include <drogon/utils/coroutine.h>
 #include <trantor/net/EventLoopThread.h>
 
+#include <catch2/catch_test_macros.hpp>
 #include <stdexcept>
+
+#include "config/Env.h"
+#include "storage/S3ImageStore.h"
+#include "storage/Sigv4Signer.h"
 
 using receipt_scanner::config::envOr;
 using receipt_scanner::storage::S3ImageStore;
@@ -34,7 +34,7 @@ S3ImageStore::Config testConfig() {
   return S3ImageStore::Config{
       .endpoint = envOr("S3_ENDPOINT", "http://localhost:9000"),
       .region = envOr("S3_REGION", "us-east-1"),
-      .bucket = envOr("S3_BUCKET", "receipts") + "-test", // dedicated test bucket, never the real one
+      .bucket = envOr("S3_BUCKET", "receipts") + "-test",  // dedicated test bucket, never the real one
       .accessKey = envOr("S3_ACCESS_KEY", "receipt_scanner"),
       .secretKey = envOr("S3_SECRET_KEY", "dev_only_change_me"),
       .pathStyle = envOr("S3_PATH_STYLE", "true") == "true",
@@ -70,7 +70,7 @@ drogon::Task<> ensureBucketExists(const S3ImageStore::Config &config) {
   }
 }
 
-} // namespace
+}  // namespace
 
 TEST_CASE("S3ImageStore round-trips bytes against real MinIO", "[image_store]") {
   auto config = testConfig();

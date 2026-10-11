@@ -1,0 +1,23 @@
+# Scope of unsupervised action
+
+Decided 2026-10-12, during Step 8 CI troubleshooting.
+
+Default allowed scope: code in this repo, and package dependencies installed and run inside
+the Docker containers defined here (docker-compose.yml, Dockerfile).
+
+Beyond that:
+
+- **This repo's GitHub remote (pushes to `main`, triggering/re-running CI)** — allowed
+  unsupervised. Still never force-push, never touch repo/branch settings or Actions
+  permissions, never delete a workflow run, without asking first.
+- **Host machine, outside Docker** — may USE what's already installed (compilers, CLI
+  tools, etc.) for diagnosis or builds. May NOT install anything new or upgrade anything
+  existing (brew/apt/npm -g/pip/toolchain installs, OS-level config) without explicit
+  permission first.
+- **External accounts/credentials** (Anthropic API key, email provider, VPS/DNS/TLS for
+  the eventual deploy, a container registry for a self-hosted image) — never set up or
+  spend against unsupervised. Implement the code path; the user provisions the actual
+  account/credential.
+  - Specifically: if a self-hosted patched image on a registry (e.g. GHCR) ever becomes
+    the right fix for the MinIO Docker Hub situation (see plan.md Step 8 / log.md
+    2026-10-05), ask first — the user provisions the registry.

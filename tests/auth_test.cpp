@@ -177,18 +177,28 @@ TEST_CASE("password reset invalidates all existing sessions (decided 2c)", "[aut
 
     auto session = co_await authService.login("reset-test@example.com", "old-password");
     REQUIRE(session.has_value());
-    REQUIRE((co_await authService.validateSession(session->rawToken)).has_value());
+    // Binding each co_await's result to a named local before asserting, not awaiting
+    // directly inside REQUIRE/REQUIRE_FALSE -- GCC's coroutine lowering can re-execute a
+    // co_await living directly inside the do/while Catch2's assertion macros expand into
+    // (confirmed in receipt_test.cpp: a non-idempotent call ran extra times under GCC, never
+    // under Clang). login() creating duplicate sessions silently under GCC is exactly the
+    // kind of side effect this would have masked here.
+    auto validated = co_await authService.validateSession(session->rawToken);
+    REQUIRE(validated.has_value());
 
     auto resetToken = co_await authService.requestPasswordReset("reset-test@example.com");
     auto confirmed = co_await authService.confirmPasswordReset(resetToken, "new-password");
     REQUIRE(confirmed);
 
     // The session that predates the reset must be dead now.
-    REQUIRE_FALSE((co_await authService.validateSession(session->rawToken)).has_value());
+    auto validatedAfterReset = co_await authService.validateSession(session->rawToken);
+    REQUIRE_FALSE(validatedAfterReset.has_value());
 
     // Old password no longer works; new one does.
-    REQUIRE_FALSE((co_await authService.login("reset-test@example.com", "old-password")).has_value());
-    REQUIRE((co_await authService.login("reset-test@example.com", "new-password")).has_value());
+    auto loginWithOldPassword = co_await authService.login("reset-test@example.com", "old-password");
+    REQUIRE_FALSE(loginWithOldPassword.has_value());
+    auto loginWithNewPassword = co_await authService.login("reset-test@example.com", "new-password");
+    REQUIRE(loginWithNewPassword.has_value());
 
     // The reset token is single-use.
     auto reuse = co_await authService.confirmPasswordReset(resetToken, "another-password");

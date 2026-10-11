@@ -266,7 +266,8 @@ TEST_CASE("getReceipt/listImages: isolated between tenants", "[receipt]") {
     auto created = co_await service.uploadReceipt(userA, oneImage(readFixture("tiny.png")), false);
     auto receiptId = std::get<int64_t>(created);
 
-    REQUIRE_FALSE((co_await service.getReceipt(userB, receiptId)).has_value());
+    auto notOwned = co_await service.getReceipt(userB, receiptId);
+    REQUIRE_FALSE(notOwned.has_value());
 
     bool threw = false;
     try {
@@ -291,11 +292,23 @@ TEST_CASE("deleteReceipt: removes the row and the stored image, rejects non-owne
     auto location = co_await service.findImage((co_await service.listImages(userA, receiptId))[0].id);
     REQUIRE(location.has_value());
 
-    REQUIRE_FALSE(co_await service.deleteReceipt(userB, receiptId)); // not the owner
-    REQUIRE(co_await service.deleteReceipt(userA, receiptId));
-    REQUIRE_FALSE(co_await service.deleteReceipt(userA, receiptId)); // already gone
+    // Binding each co_await's result to a named local before asserting on it, not awaiting
+    // directly inside REQUIRE/REQUIRE_FALSE -- Catch2's assertion macros expand into a
+    // do/while control-flow wrapper, and GCC's coroutine lowering re-enters that wrapper in
+    // a way that re-executes a co_await living directly inside it (confirmed by instrumenting
+    // ReceiptService::deleteReceipt: the "not the owner" call ran 3 times and the real delete
+    // ran twice under GCC, vs once each as written -- never reproduces under Clang). Applies
+    // project-wide; see the same fix in auth_test.cpp and image_store_test.cpp.
+    auto deletedByB = co_await service.deleteReceipt(userB, receiptId);
+    REQUIRE_FALSE(deletedByB); // not the owner
 
-    REQUIRE_FALSE((co_await service.getReceipt(userA, receiptId)).has_value());
+    auto deletedByA = co_await service.deleteReceipt(userA, receiptId);
+    REQUIRE(deletedByA);
+    auto deletedAgain = co_await service.deleteReceipt(userA, receiptId); // already gone
+    REQUIRE_FALSE(deletedAgain);
+
+    auto stillThere = co_await service.getReceipt(userA, receiptId);
+    REQUIRE_FALSE(stillThere.has_value());
 
     bool threw = false;
     try {

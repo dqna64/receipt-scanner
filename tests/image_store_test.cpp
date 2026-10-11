@@ -109,8 +109,15 @@ TEST_CASE("S3ImageStore: different keys and content types round-trip independent
     co_await store.put("sigv4-test/a.webp", "image/webp", "aaa-bytes");
     co_await store.put("sigv4-test/b.json", "application/json", "{\"b\":true}");
 
-    REQUIRE((co_await store.get("sigv4-test/a.webp")) == "aaa-bytes");
-    REQUIRE((co_await store.get("sigv4-test/b.json")) == "{\"b\":true}");
+    // Binding each co_await's result to a named local before asserting, not awaiting
+    // directly inside REQUIRE -- see receipt_test.cpp's deleteReceipt test for why: GCC's
+    // coroutine lowering can re-execute a co_await living directly inside the do/while
+    // Catch2's assertion macros expand into (never reproduces under Clang). Harmless here
+    // (get() is idempotent) but kept consistent with the project-wide fix.
+    auto bytesA = co_await store.get("sigv4-test/a.webp");
+    REQUIRE(bytesA == "aaa-bytes");
+    auto bytesB = co_await store.get("sigv4-test/b.json");
+    REQUIRE(bytesB == "{\"b\":true}");
 
     co_await store.remove("sigv4-test/a.webp");
     co_await store.remove("sigv4-test/b.json");

@@ -2,7 +2,7 @@
 # Fails if any test passes a bare `co_await` as a Catch2 assertion macro argument, e.g.
 # `REQUIRE(co_await f())`. Under GCC the co_await re-executes inside the macro's wrapper
 # (f runs 2-3x); Clang never reproduces it, so a Clang-only local build can't catch it.
-# Bind the result to a local first. Full writeup: log.md 2026-10-12.
+# Bind the result to a local first. Full writeup: .agent_dqna64/log.md 2026-10-12.
 # Used by the pre-push hook and CI. Usage: check-test-patterns.sh [dir...] (default: tests/)
 set -euo pipefail
 

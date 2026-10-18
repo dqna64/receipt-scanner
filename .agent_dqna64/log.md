@@ -1,6 +1,6 @@
 # Work Log
 
-Daily record of work done. Newest day first. Companion to `spec.md` (what/why) and `plan.md` (implementation steps + TODO list). Update every working session.
+Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md` (what/why) and `.agent_dqna64/plans/plan.md` (implementation steps + TODO list). Update every working session.
 
 ## Sessions
 

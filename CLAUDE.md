@@ -19,5 +19,5 @@ Beyond that:
   spend against unsupervised. Implement the code path; the user provisions the actual
   account/credential.
   - Specifically: if a self-hosted patched image on a registry (e.g. GHCR) ever becomes
-    the right fix for the MinIO Docker Hub situation (see plan.md Step 8 / log.md
+    the right fix for the MinIO Docker Hub situation (see .agent_dqna64/plans/plan.md Step 8 / .agent_dqna64/log.md
     2026-10-05), ask first — the user provisions the registry.

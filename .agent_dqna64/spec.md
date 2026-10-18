@@ -313,4 +313,4 @@ Notes for later, not gating M1 launch. Revisit if usage grows beyond "just me" o
 
 # Implementation Plan
 
-See `plan.md` — 19 steps across 7 phases, one PR per step, review-gated. spec.md stays the what/why; plan.md tracks the how/when + the running TODO list; `log.md` tracks daily work done.
+See `.agent_dqna64/plans/plan.md` — 19 steps across 7 phases, one PR per step, review-gated. spec.md stays the what/why; plan.md tracks the how/when + the running TODO list; `log.md` tracks daily work done.

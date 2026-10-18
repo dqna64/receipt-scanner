@@ -1,6 +1,6 @@
 # receipt-scanner
 
-Personal receipt-scanning app. See `spec.md` (what/why) and `plan.md` (how/when, step-by-step).
+Personal receipt-scanning app. See `.agent_dqna64/spec.md` (what/why) and `.agent_dqna64/plans/plan.md` (how/when, step-by-step).
 
 ## Prerequisites (macOS, arm64 dev)
 

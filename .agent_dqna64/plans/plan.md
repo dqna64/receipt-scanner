@@ -1,6 +1,8 @@
 # Implementation Plan
 
-Companion to `spec.md` (the what/why). This is the how/when. Built in small steps: each step = one PR = one conceptual thing, reviewed and understood before the next begins.
+Branch: `main`. Lives in `.agent_dqna64/plans/` (branch-plans convention); agent session logs are in `.agent_dqna64/logs/`.
+
+Companion to `.agent_dqna64/spec.md` (the what/why). This is the how/when. Built in small steps: each step = one PR = one conceptual thing, reviewed and understood before the next begins.
 
 ## TODO
 

@@ -5,9 +5,15 @@
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace receipt_scanner::storage {
+
+class ImageDecodeError : public std::runtime_error {
+public:
+  using std::runtime_error::runtime_error;
+};
 
 struct NormalizedImage {
   std::string bytes; // WebP-encoded
@@ -31,9 +37,9 @@ public:
   explicit ImageNormalizer(size_t workerThreads = 2);
   ~ImageNormalizer();
 
-  // Throws std::runtime_error (via the coroutine machinery, from the worker thread) if
-  // `bytes` isn't a decodable JPEG/PNG/WebP -- the caller (Step 8's upload handler) is
-  // expected to have already rejected anything else at the app layer.
+  // Throws ImageDecodeError (via the coroutine machinery, from the worker thread) if `bytes`
+  // isn't a decodable JPEG/PNG/WebP -- the client's fault, a 400. A WebP encode failure
+  // throws plain std::runtime_error instead: that's our fault, a 500.
   drogon::Task<NormalizedImage> normalize(std::string bytes) const;
 
 private:

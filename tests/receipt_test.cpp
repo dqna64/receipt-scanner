@@ -11,13 +11,16 @@
 
 #include <fstream>
 #include <sstream>
+#include <thread>
 
 using receipt_scanner::config::envOr;
 using receipt_scanner::receipts::ImageConflict;
 using receipt_scanner::receipts::ReceiptNotFoundError;
 using receipt_scanner::receipts::ReceiptService;
 using receipt_scanner::receipts::TooManyImagesError;
+using receipt_scanner::storage::ImageDecodeError;
 using receipt_scanner::storage::ImageNormalizer;
+using receipt_scanner::storage::ImageStore;
 using receipt_scanner::storage::S3ImageStore;
 
 namespace {
@@ -66,6 +69,38 @@ ReceiptService makeService() {
   return ReceiptService(testDb(), testImageStore(), testNormalizer());
 }
 
+// testDb()'s single connection would serialize two transactions on its own, so a concurrency
+// test against it passes with or without ReceiptService's advisory lock. Static for the same
+// destructor-deadlock reason as testDb().
+const drogon::orm::DbClientPtr &concurrentTestDb() {
+  static drogon::orm::DbClientPtr client = drogon::orm::DbClient::newPgClient(
+      "host=" + envOr("DB_HOST", "localhost") + " port=" + envOr("DB_PORT", "5432") +
+          " dbname=" + envOr("DB_NAME", "receipt_scanner") + " user=" + envOr("DB_USER", "receipt_scanner") +
+          " password=" + envOr("DB_PASSWORD", ""),
+      /*connSize=*/2);
+  return client;
+}
+
+// Delegates to the real test store, but throws on the failOnPut-th put (1-based) -- simulates
+// S3 going away mid-batch.
+class FailingImageStore : public ImageStore {
+public:
+  explicit FailingImageStore(int failOnPut) : failOnPut_(failOnPut) {}
+
+  drogon::Task<> put(std::string key, std::string contentType, std::string bytes) override {
+    if (++puts_ == failOnPut_) {
+      throw std::runtime_error("FailingImageStore: simulated S3 failure");
+    }
+    co_await testImageStore().put(std::move(key), std::move(contentType), std::move(bytes));
+  }
+  drogon::Task<std::string> get(std::string key) override { co_return co_await testImageStore().get(std::move(key)); }
+  drogon::Task<> remove(std::string key) override { co_await testImageStore().remove(std::move(key)); }
+
+private:
+  int failOnPut_;
+  int puts_ = 0;
+};
+
 std::string readFixture(const std::string &name) {
   std::ifstream f(std::string(RECEIPT_SCANNER_SOURCE_DIR) + "/tests/fixtures/" + name, std::ios::binary);
   REQUIRE(f.is_open());
@@ -80,6 +115,12 @@ std::string readFixture(const std::string &name) {
 // Routing it through an ordinary function call sidesteps the list-init path entirely. Only
 // reproduces under GCC; Clang (this Mac's local builds) compiles the bare braced form fine.
 std::vector<std::string> oneImage(std::string fixtureBytes) { return {std::move(fixtureBytes)}; }
+std::vector<std::string> twoImages(std::string a, std::string b) { return {std::move(a), std::move(b)}; }
+
+drogon::Task<int64_t> countRows(const std::string &table, int64_t userId) {
+  auto result = co_await testDb()->execSqlCoro("SELECT count(*) AS n FROM " + table + " WHERE user_id = $1", userId);
+  co_return result[0]["n"].as<int64_t>();
+}
 
 drogon::Task<> ensureBucketExists() {
   // Mirrors tests/image_store_test.cpp's setup -- MinIO needs the bucket to exist before
@@ -330,7 +371,7 @@ TEST_CASE("upload: undecodable bytes throw, creating nothing", "[receipt]") {
     bool threw = false;
     try {
       co_await service.uploadReceipt(userId, oneImage("not an image, just plain bytes"), false);
-    } catch (const std::exception &) {
+    } catch (const ImageDecodeError &) {
       threw = true;
     }
     REQUIRE(threw);
@@ -339,3 +380,123 @@ TEST_CASE("upload: undecodable bytes throw, creating nothing", "[receipt]") {
     REQUIRE(count[0]["n"].as<int64_t>() == 0);
   }());
 }
+
+TEST_CASE("upload: enforces the per-receipt image cap", "[receipt]") {
+  auto service = makeService();
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await ensureBucketExists();
+    co_await wipeReceiptTables();
+    auto userId = co_await makeUser("upload-cap-test@example.com");
+
+    std::vector<std::string> nine(9, readFixture("tiny.png")); // default cap is 8
+    bool threw = false;
+    try {
+      co_await service.uploadReceipt(userId, std::move(nine), true);
+    } catch (const TooManyImagesError &) {
+      threw = true;
+    }
+    REQUIRE(threw);
+
+    auto receipts = co_await countRows("receipts", userId);
+    REQUIRE(receipts == 0);
+  }());
+}
+
+TEST_CASE("upload: S3 failure mid-batch rolls back the receipt and every image row", "[receipt]") {
+  FailingImageStore failingStore(/*failOnPut=*/2);
+  ReceiptService failingService(testDb(), failingStore, testNormalizer());
+  auto service = makeService();
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await ensureBucketExists();
+    co_await wipeReceiptTables();
+    auto userId = co_await makeUser("s3-fail-upload@example.com");
+
+    bool threw = false;
+    try {
+      co_await failingService.uploadReceipt(userId, twoImages(readFixture("tiny.png"), readFixture("small.webp")),
+                                            false);
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    REQUIRE(threw);
+
+    auto receipts = co_await countRows("receipts", userId);
+    REQUIRE(receipts == 0);
+    auto images = co_await countRows("receipt_images", userId);
+    REQUIRE(images == 0);
+
+    // Before the fix, image 1's row was committed, so this retry got a 409 pointing at a
+    // half-written receipt instead of succeeding.
+    auto retry = co_await service.uploadReceipt(userId, twoImages(readFixture("tiny.png"), readFixture("small.webp")),
+                                                false);
+    REQUIRE(std::holds_alternative<int64_t>(retry));
+  }());
+}
+
+TEST_CASE("addImages: S3 failure mid-batch adds no image rows", "[receipt]") {
+  FailingImageStore failingStore(/*failOnPut=*/2);
+  ReceiptService failingService(testDb(), failingStore, testNormalizer());
+  auto service = makeService();
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await ensureBucketExists();
+    co_await wipeReceiptTables();
+    auto userId = co_await makeUser("s3-fail-add@example.com");
+
+    auto created = co_await service.uploadReceipt(userId, oneImage(readFixture("rotated_orientation6.jpg")), false);
+    auto receiptId = std::get<int64_t>(created);
+
+    bool threw = false;
+    try {
+      co_await failingService.addImages(userId, receiptId, twoImages(readFixture("tiny.png"), readFixture("small.webp")),
+                                        false);
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    REQUIRE(threw);
+
+    auto images = co_await service.listImages(userId, receiptId);
+    REQUIRE(images.size() == 1);
+  }());
+}
+
+TEST_CASE("upload: concurrent uploads of the same image create exactly one receipt", "[receipt]") {
+  auto setup = makeService();
+  int64_t userId = 0;
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await ensureBucketExists();
+    co_await wipeReceiptTables();
+    userId = co_await makeUser("double-tap@example.com");
+  }());
+
+  // A real double-tap: two requests in flight at once, each on its own thread and its own
+  // pooled connection. Assertions stay on this thread -- Catch2's macros aren't thread-safe.
+  ReceiptService service(concurrentTestDb(), testImageStore(), testNormalizer());
+  auto image = readFixture("tiny.png");
+  std::variant<int64_t, ImageConflict> results[2];
+  std::exception_ptr errors[2];
+  std::thread threads[2];
+  for (int i = 0; i < 2; ++i) {
+    threads[i] = std::thread([&, i] {
+      try {
+        results[i] = drogon::sync_wait(service.uploadReceipt(userId, oneImage(image), false));
+      } catch (...) {
+        errors[i] = std::current_exception();
+      }
+    });
+  }
+  for (auto &t : threads) {
+    t.join();
+  }
+
+  for (auto &error : errors) {
+    if (error) {
+      std::rethrow_exception(error); // Catch2 reports it with its message
+    }
+  }
+  int created = std::holds_alternative<int64_t>(results[0]) + std::holds_alternative<int64_t>(results[1]);
+  REQUIRE(created == 1);
+
+  int64_t receipts = drogon::sync_wait(countRows("receipts", userId));
+  REQUIRE(receipts == 1);
+}
+

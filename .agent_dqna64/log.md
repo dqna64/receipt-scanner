@@ -6,6 +6,7 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-10-18 | 5df2ebae-d65c-4213-9fb3-f4d2f2e3af8f | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-05 | a9f8cf64-3eab-4d25-a362-794f65db64e3 | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-09-05 | (remote-control session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-09-03 | (remote-control session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
@@ -17,6 +18,25 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 | 2026-07-09 | cfefe238-3b8b-451c-93fe-f6aab5c18730 | Claude | /Users/me/receipt-scanner | motorway1.local |
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
+
+## 2026-10-18 (Step 8 review + follow-up fixes)
+
+**Done**
+- Added `scripts/check-test-patterns.sh` (`88bb3d2`): fails on any `REQUIRE*`/`CHECK*` with a bare `co_await` argument (the 2026-10-12 GCC bug), incl. multi-line calls. Runs first in the pre-push hook and as a seconds-long `lint` CI job. Verified it flags all 11 sites from `a7d9743`'s parent. Motivation: the hook builds with whatever compiler CMake picks (Clang on this Mac), so GCC-only bugs were reaching CI every time.
+- Reviewed Step 8 after the fact (it was committed 2026-10-05 before review). Fixed four real bugs:
+  - **Partial batch committed on S3 failure.** Drogon's `Transaction` commits in its destructor unless rolled back (checked in `TransactionImpl.cc`), so an exception mid-batch (S3 PUT failing on image 3) committed the receipt + images 1-2; client got a 400, and a retry got a 409 pointing at the half-written receipt. Fix: `try/catch(...) { rollback(); throw; }` in `uploadReceipt`/`addImages`, same as `AuthService::registerUser` already did. Orphaned S3 objects from the failed batch remain (accepted).
+  - **Upload ignored the image cap.** Only `addImages` checked `MAX_IMAGES_PER_RECEIPT`; `POST /receipts` with 12 files created a 12-image receipt.
+  - **Every failure was a 400 `invalid_image` echoing `e.what()`.** New `storage::ImageDecodeError` (decode failures only) -> 400; everything else (S3/Postgres down, WebP encode) -> generic 500, detail logged.
+  - **Double-tap dedup race.** The hash check and insert weren't serialized, so two concurrent uploads of the same photo both passed. Fix: `pg_advisory_xact_lock(user_id)` at the start of the write transaction, with the dedup check and `addImages`'s cap count moved under it. Mutation-tested: with the lock removed, the new concurrency test failed 5/5; with it, passed 5/5. The test needs its own 2-connection DbClient -- the suite's 1-connection `testDb()` serializes transactions by itself and would pass without the lock.
+- Extracted the write path shared by upload and add-images into `prepareImages` (normalize + hash, no I/O) / `lockUserImages` / `findConflict` / `storeImages`.
+- Tests: 32 cases / 165 assertions passing under both Clang (local) and GCC (the `docker build --target build` loop from 2026-10-12); the concurrency test 5/5 under each. 4 new: upload cap, S3-failure rollback for upload and add, concurrent double-tap.
+
+**Decided**
+- Response-before-commit (Drogon commits only on `Transaction` destruction, after the handler has already responded; a commit failure is invisible to the client) -- left as is for now; affects `AuthService` too.
+- `mimeType` on `NormalizedImage` -- dropped until a second output format exists; the image proxy can't use it without `ImageStore::get` returning Content-Type, so it would be plumbing for one value.
+
+**Known tradeoffs**
+- The per-user lock serializes one user's uploads, S3 PUTs included -- Step 12's multi-select loop runs sequentially server-side. Waiters hold a pooled DB connection (pool size 4).
 
 ## 2026-10-12 (same session as 2026-10-05, resumed after a pause)
 

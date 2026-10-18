@@ -58,64 +58,97 @@ ReceiptSummary rowToSummary(const drogon::orm::Row &row) {
 
 } // namespace
 
-drogon::Task<std::variant<std::vector<ReceiptService::PreparedImage>, ImageConflict>> ReceiptService::prepareImages(
-    int64_t userId, const std::vector<std::string> &rawImages, bool force) {
+drogon::Task<std::vector<ReceiptService::PreparedImage>> ReceiptService::prepareImages(
+    const std::vector<std::string> &rawImages) {
   std::vector<PreparedImage> prepared;
   prepared.reserve(rawImages.size());
 
   for (const auto &raw : rawImages) {
-    // Throws (undecodable bytes -- not JPEG/PNG/WebP, e.g. HEIC, which the pinned libvips
-    // build has no decoder for) propagates straight out of this coroutine to the caller;
-    // the controller translates it to a 400.
+    // Undecodable bytes (not JPEG/PNG/WebP, e.g. HEIC, which the pinned libvips build has no
+    // decoder for) throw storage::ImageDecodeError straight out to the caller; the
+    // controller translates it to a 400.
     auto normalized = co_await normalizer_.normalize(raw);
     auto hash = sha256Hex(normalized.bytes);
-
-    if (!force) {
-      auto dup = co_await db_->execSqlCoro(
-          "SELECT id, receipt_id FROM receipt_images WHERE user_id = $1 AND image_sha256 = $2 LIMIT 1", userId,
-          hash);
-      if (!dup.empty()) {
-        co_return ImageConflict{dup[0]["receipt_id"].as<int64_t>(), dup[0]["id"].as<int64_t>()};
-      }
-    }
-
     prepared.push_back(PreparedImage{std::move(normalized), std::move(hash)});
   }
 
   co_return prepared;
 }
 
-drogon::Task<std::variant<int64_t, ImageConflict>> ReceiptService::uploadReceipt(int64_t userId,
-                                                                                  std::vector<std::string> images,
-                                                                                  bool force) {
-  auto prepared = co_await prepareImages(userId, images, force);
-  if (std::holds_alternative<ImageConflict>(prepared)) {
-    co_return std::get<ImageConflict>(prepared);
+drogon::Task<> ReceiptService::lockUserImages(const std::shared_ptr<drogon::orm::Transaction> &transaction,
+                                              int64_t userId) {
+  // Held until the transaction ends, so two concurrent writes for the same user (a double-tap
+  // upload) can't both pass the dedup/cap checks before either commits. Per-user rather than
+  // per-hash: a batch has several hashes, and taking several locks would need a fixed order to
+  // avoid deadlock. Keyed on the bare user id -- the only advisory lock in the app so far.
+  co_await transaction->execSqlCoro("SELECT pg_advisory_xact_lock($1::bigint)", userId);
+}
+
+drogon::Task<std::optional<ImageConflict>> ReceiptService::findConflict(
+    const std::shared_ptr<drogon::orm::Transaction> &transaction, int64_t userId,
+    const std::vector<PreparedImage> &prepared) {
+  for (const auto &prep : prepared) {
+    auto dup = co_await transaction->execSqlCoro(
+        "SELECT id, receipt_id FROM receipt_images WHERE user_id = $1 AND image_sha256 = $2 LIMIT 1", userId,
+        prep.sha256Hex);
+    if (!dup.empty()) {
+      co_return ImageConflict{dup[0]["receipt_id"].as<int64_t>(), dup[0]["id"].as<int64_t>()};
+    }
   }
+  co_return std::nullopt;
+}
 
-  auto transaction = co_await db_->newTransactionCoro();
-  // Provisional kind/direction (spec: "receipts.kind: purchase (default)") -- Step 10's
-  // scanner overwrites these once it classifies the actual document type.
-  auto receiptResult = co_await transaction->execSqlCoro(
-      "INSERT INTO receipts (user_id, kind, direction, source, scan_state) "
-      "VALUES ($1, 'purchase', 'outflow', 'scanned', 'uploaded') RETURNING id",
-      userId);
-  auto receiptId = receiptResult[0]["id"].as<int64_t>();
-
-  // S3 writes happen here, inside the open (uncommitted) Postgres transaction -- the two
-  // systems aren't transactionally joined. Deliberate ordering: S3 PUT before the DB insert
-  // that references it, so a failure leaves at worst an orphaned S3 object (wasted storage,
-  // no dangling DB reference) rather than a DB row pointing at an image that was never
-  // actually written.
-  for (auto &prep : std::get<std::vector<PreparedImage>>(prepared)) {
+drogon::Task<> ReceiptService::storeImages(const std::shared_ptr<drogon::orm::Transaction> &transaction,
+                                           int64_t userId, int64_t receiptId,
+                                           const std::vector<PreparedImage> &prepared) {
+  // S3 and Postgres aren't transactionally joined. S3 PUT before the DB insert that references
+  // it, so a failure (the caller rolls back) leaves at worst orphaned S3 objects -- wasted
+  // storage -- never a DB row pointing at an image that was never written.
+  for (const auto &prep : prepared) {
     auto key = generateImageKey(userId, receiptId);
     co_await imageStore_.put(key, "image/webp", prep.normalized.bytes);
     co_await transaction->execSqlCoro(
         "INSERT INTO receipt_images (receipt_id, user_id, image_key, image_sha256) VALUES ($1, $2, $3, $4)",
         receiptId, userId, key, prep.sha256Hex);
   }
+}
 
-  co_return receiptId;
+drogon::Task<std::variant<int64_t, ImageConflict>> ReceiptService::uploadReceipt(int64_t userId,
+                                                                                  std::vector<std::string> images,
+                                                                                  bool force) {
+  if (static_cast<int64_t>(images.size()) > maxImagesPerReceipt()) {
+    throw TooManyImagesError();
+  }
+  auto prepared = co_await prepareImages(images);
+
+  auto transaction = co_await db_->newTransactionCoro();
+  // Explicit rollback on every non-success exit: Drogon's Transaction commits in its
+  // destructor unless rolled back, so an exception (e.g. S3 failing on image 3 of 3) would
+  // otherwise commit the receipt with images 1-2. Same reasoning as AuthService::registerUser.
+  try {
+    co_await lockUserImages(transaction, userId);
+    if (!force) {
+      auto conflict = co_await findConflict(transaction, userId, prepared);
+      if (conflict) {
+        transaction->rollback();
+        co_return *conflict;
+      }
+    }
+
+    // Provisional kind/direction (spec: "receipts.kind: purchase (default)") -- Step 10's
+    // scanner overwrites these once it classifies the actual document type.
+    auto receiptResult = co_await transaction->execSqlCoro(
+        "INSERT INTO receipts (user_id, kind, direction, source, scan_state) "
+        "VALUES ($1, 'purchase', 'outflow', 'scanned', 'uploaded') RETURNING id",
+        userId);
+    auto receiptId = receiptResult[0]["id"].as<int64_t>();
+
+    co_await storeImages(transaction, userId, receiptId, prepared);
+    co_return receiptId;
+  } catch (...) {
+    transaction->rollback();
+    throw;
+  }
 }
 
 drogon::Task<std::variant<std::monostate, ImageConflict>> ReceiptService::addImages(int64_t userId,
@@ -127,32 +160,38 @@ drogon::Task<std::variant<std::monostate, ImageConflict>> ReceiptService::addIma
     throw ReceiptNotFoundError();
   }
 
-  auto countResult =
-      co_await db_->execSqlCoro("SELECT count(*) AS n FROM receipt_images WHERE receipt_id = $1", receiptId);
-  auto currentCount = countResult[0]["n"].as<int64_t>();
-  if (currentCount + static_cast<int64_t>(images.size()) > maxImagesPerReceipt()) {
-    throw TooManyImagesError();
-  }
-
-  auto prepared = co_await prepareImages(userId, images, force);
-  if (std::holds_alternative<ImageConflict>(prepared)) {
-    co_return std::get<ImageConflict>(prepared);
-  }
+  auto prepared = co_await prepareImages(images);
 
   auto transaction = co_await db_->newTransactionCoro();
-  for (auto &prep : std::get<std::vector<PreparedImage>>(prepared)) {
-    auto key = generateImageKey(userId, receiptId);
-    co_await imageStore_.put(key, "image/webp", prep.normalized.bytes);
-    co_await transaction->execSqlCoro(
-        "INSERT INTO receipt_images (receipt_id, user_id, image_key, image_sha256) VALUES ($1, $2, $3, $4)",
-        receiptId, userId, key, prep.sha256Hex);
-  }
-  // Sets the receipt up for the Step 10 worker to (re-)scan the FULL image set once it
-  // exists; until then this just parks at scan_state=uploaded, per spec (explicitly
-  // expected: "until Step 10 lands it just parks there").
-  co_await transaction->execSqlCoro("UPDATE receipts SET scan_state = 'uploaded' WHERE id = $1", receiptId);
+  try { // rollback on every non-success exit -- see uploadReceipt
+    co_await lockUserImages(transaction, userId);
 
-  co_return std::monostate{};
+    // Counted under the lock, so two concurrent adds can't both fit under the cap.
+    auto countResult =
+        co_await transaction->execSqlCoro("SELECT count(*) AS n FROM receipt_images WHERE receipt_id = $1", receiptId);
+    auto currentCount = countResult[0]["n"].as<int64_t>();
+    if (currentCount + static_cast<int64_t>(prepared.size()) > maxImagesPerReceipt()) {
+      throw TooManyImagesError();
+    }
+
+    if (!force) {
+      auto conflict = co_await findConflict(transaction, userId, prepared);
+      if (conflict) {
+        transaction->rollback();
+        co_return *conflict;
+      }
+    }
+
+    co_await storeImages(transaction, userId, receiptId, prepared);
+    // Sets the receipt up for the Step 10 worker to (re-)scan the FULL image set once it
+    // exists; until then this just parks at scan_state=uploaded, per spec (explicitly
+    // expected: "until Step 10 lands it just parks there").
+    co_await transaction->execSqlCoro("UPDATE receipts SET scan_state = 'uploaded' WHERE id = $1", receiptId);
+    co_return std::monostate{};
+  } catch (...) {
+    transaction->rollback();
+    throw;
+  }
 }
 
 drogon::Task<std::optional<ReceiptSummary>> ReceiptService::getReceipt(int64_t userId, int64_t receiptId) {

@@ -36,7 +36,7 @@ NormalizedImage normalizeSync(const std::string &bytes) {
                                                 ->set("height", ImageNormalizer::kLongEdgePx)
                                                 ->set("size", VIPS_SIZE_DOWN));
   } catch (const vips::VError &e) {
-    throw std::runtime_error(std::string("ImageNormalizer: failed to decode/resize image: ") + e.what());
+    throw ImageDecodeError(std::string("ImageNormalizer: failed to decode/resize image: ") + e.what());
   }
 
   try {

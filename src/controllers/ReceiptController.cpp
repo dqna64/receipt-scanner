@@ -2,12 +2,14 @@
 
 #include "receipts/AppServices.h"
 #include "receipts/ReceiptService.h"
+#include "storage/ImageNormalizer.h"
 
 #include <drogon/MultiPart.h>
 #include <drogon/drogon.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <exception>
 
 namespace receipt_scanner {
 
@@ -18,6 +20,7 @@ using receipt_scanner::receipts::ReceiptNotFoundError;
 using receipt_scanner::receipts::ReceiptService;
 using receipt_scanner::receipts::ReceiptSummary;
 using receipt_scanner::receipts::TooManyImagesError;
+using receipt_scanner::storage::ImageDecodeError;
 
 constexpr size_t kMaxImageBytes = 15 * 1024 * 1024; // 15MB/image, app-layer copy of Caddy's limit (spec)
 
@@ -98,6 +101,26 @@ bool forceRequested(const drogon::HttpRequestPtr &req) {
   return req->getParameter("force") == "true";
 }
 
+// Shared by upload/addImages. Only the client's own mistakes get a 4xx; anything else (S3 or
+// Postgres down, a WebP encode failure) is ours -- a generic 500 with the detail logged, not
+// echoed back to the client.
+drogon::HttpResponsePtr imageWriteErrorResponse(std::exception_ptr error) {
+  try {
+    std::rethrow_exception(error);
+  } catch (const ReceiptNotFoundError &) {
+    return errorResponse(drogon::k404NotFound, "not_found", "receipt not found");
+  } catch (const TooManyImagesError &) {
+    return errorResponse(drogon::k400BadRequest, "too_many_images", "this would exceed the per-receipt image cap");
+  } catch (const ImageDecodeError &) {
+    return errorResponse(drogon::k400BadRequest, "invalid_image", "could not decode image (JPEG, PNG or WebP expected)");
+  } catch (const std::exception &e) {
+    LOG_ERROR << "image write failed: " << e.what();
+  } catch (...) {
+    LOG_ERROR << "image write failed: non-std exception";
+  }
+  return errorResponse(drogon::k500InternalServerError, "internal_error", "internal error");
+}
+
 } // namespace
 
 drogon::Task<> ReceiptController::upload(drogon::HttpRequestPtr req,
@@ -115,8 +138,8 @@ drogon::Task<> ReceiptController::upload(drogon::HttpRequestPtr req,
       co_return;
     }
     callback(jsonResponse(drogon::k201Created, {{"id", std::get<int64_t>(result)}}));
-  } catch (const std::exception &e) {
-    callback(errorResponse(drogon::k400BadRequest, "invalid_image", e.what()));
+  } catch (...) {
+    callback(imageWriteErrorResponse(std::current_exception()));
   }
 }
 
@@ -136,12 +159,8 @@ drogon::Task<> ReceiptController::addImages(drogon::HttpRequestPtr req,
       co_return;
     }
     callback(jsonResponse(drogon::k200OK, {{"status", "ok"}}));
-  } catch (const ReceiptNotFoundError &) {
-    callback(errorResponse(drogon::k404NotFound, "not_found", "receipt not found"));
-  } catch (const TooManyImagesError &) {
-    callback(errorResponse(drogon::k400BadRequest, "too_many_images", "adding these images would exceed the per-receipt cap"));
-  } catch (const std::exception &e) {
-    callback(errorResponse(drogon::k400BadRequest, "invalid_image", e.what()));
+  } catch (...) {
+    callback(imageWriteErrorResponse(std::current_exception()));
   }
 }
 

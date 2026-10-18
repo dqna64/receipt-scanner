@@ -33,6 +33,10 @@ RUN case "$TARGETARCH" in \
       *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
     esac
 
+# Unset = unbounded `-j` (CI). Docker Desktop's 4GB VM gets OOM-killed compiling the
+# coroutine-heavy TUs in parallel under GCC -- build locally with `--build-arg BUILD_JOBS=2`.
+ARG BUILD_JOBS
+
 # Cache mount: vcpkg's compiled-package cache would otherwise live only in this throwaway
 # build layer and be recompiled from scratch (~10 min, incl. Drogon) on every Dockerfile
 # change. This persists it across builds — the CI equivalent of Step 3's vcpkg binary cache.
@@ -41,7 +45,7 @@ RUN --mount=type=cache,target=/root/.cache/vcpkg/archives \
       -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake \
       -DVCPKG_TARGET_TRIPLET="$(cat /tmp/vcpkg_triplet)" \
       -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build -j
+    && cmake --build build -j ${BUILD_JOBS}
 
 FROM debian:bookworm-slim AS runtime
 # vcpkg's community Linux triplets (arm64-linux, x64-linux) default to STATIC linking —

@@ -11,9 +11,12 @@ dirs=("$@")
 [ ${#dirs[@]} -eq 0 ] && dirs=("$repo_root/tests")
 
 # Slurps each file so a macro split across lines (`REQUIRE(\n  co_await ...`) still matches;
-# [^;]* stops the match at the end of the assertion statement.
+# [^;]* stops the match at the end of the assertion statement. `//` comments are blanked first
+# (newlines kept, so line numbers stay right) -- prose like "CHECK (...)" in a comment otherwise
+# matches through to the next real co_await.
 hits=$(find "${dirs[@]}" -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 |
   xargs -0 perl -0777 -ne '
+    s{//[^\n]*}{}g;
     while (/\b((?:REQUIRE|CHECK)\w*)\s*\([^;]*?\bco_await\b/g) {
       my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
       print "$ARGV:$line: $1(... co_await ...)\n";

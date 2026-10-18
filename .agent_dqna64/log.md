@@ -46,6 +46,7 @@ A context-compaction continuation gets a NEW session id — the 2026-07-11 row c
 - Migration `20261018000000_unique_reference_names.sql`: unique (user_id, lower(name)) on tags and payment_methods, (user_id, is_income, lower(name)) on categories. Needed because Step 11 embeds names as JSON-schema enums; per-side for categories because the scanner only embeds one side.
 - Receipt reads (`getReceipt`/`listReceipts`/PATCH response) now select through `v_receipt_state` with an explicit column list, exposing needs_review/is_confirmed (single-sourced in the view), reviewed_at/proposed_at/created_at/updated_at as ISO-8601 UTC, plus payment_method_id, offsets_receipt_id, fx fields.
 - Verified: 17 new test cases (incl. the kinds drift test) -- 49 total / 283 assertions, passing under both Clang and GCC (`docker build --build-arg BUILD_JOBS=2 --target build`; unbounded `-j` OOM-killed cc1plus in Docker Desktop's 4GB VM and took the daemon down), `scripts/smoke-test-ledger.sh` against the native server (29 HTTP checks incl. `GET /receipts/manual` -> 405, malformed JSON -> 400, envelope shape, 401 without session).
+- Committed `188dbb0` (lint ignores // comments), `b0e6b2d` (Dockerfile BUILD_JOBS), `c9f07eb` (Step 9); CI green on all four jobs -- run 39129612584.
 - Found while smoke-testing: macOS's bash 3.2 brace-expands an escaped-quote `"{...,...}"` nested inside `"$(...)"`, splitting JSON at its commas -- the smoke script builds dynamic bodies in variables first.
 
 **Open questions raised by Step 9**

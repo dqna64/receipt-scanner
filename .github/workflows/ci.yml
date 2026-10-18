@@ -13,6 +13,15 @@ env:
   VCPKG_CACHE_VERSION: v1
 
 jobs:
+  # Seconds, not minutes -- a separate job so a pattern violation shows up long before the
+  # 12-15 min build jobs finish.
+  lint:
+    name: Test-pattern lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/check-test-patterns.sh
+
   build-test:
     name: Build + test (x86_64)
     runs-on: ubuntu-24.04

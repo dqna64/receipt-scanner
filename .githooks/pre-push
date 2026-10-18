@@ -28,6 +28,8 @@ check_running() {
   fi
 }
 
+"$repo_root/scripts/check-test-patterns.sh"
+
 check_running postgres "docker compose up -d postgres"
 check_running minio "docker compose up -d minio"
 

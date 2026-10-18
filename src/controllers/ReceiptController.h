@@ -22,6 +22,11 @@ public:
                 "receipt_scanner::filters::SessionAuthFilter");
   ADD_METHOD_TO(ReceiptController::image, "/api/v1/images/{1}", drogon::Get,
                 "receipt_scanner::filters::SessionAuthFilter");
+  // A literal path, so Drogon matches it exactly before trying the /receipts/{1} patterns.
+  ADD_METHOD_TO(ReceiptController::createManual, "/api/v1/receipts/manual", drogon::Post,
+                "receipt_scanner::filters::SessionAuthFilter");
+  ADD_METHOD_TO(ReceiptController::update, "/api/v1/receipts/{1}", drogon::Patch,
+                "receipt_scanner::filters::SessionAuthFilter");
   METHOD_LIST_END
 
   drogon::Task<> upload(drogon::HttpRequestPtr req, std::function<void(const drogon::HttpResponsePtr &)> callback);
@@ -36,6 +41,10 @@ public:
                          int64_t id);
   drogon::Task<> image(drogon::HttpRequestPtr req, std::function<void(const drogon::HttpResponsePtr &)> callback,
                         int64_t id);
+  drogon::Task<> createManual(drogon::HttpRequestPtr req,
+                               std::function<void(const drogon::HttpResponsePtr &)> callback);
+  drogon::Task<> update(drogon::HttpRequestPtr req, std::function<void(const drogon::HttpResponsePtr &)> callback,
+                         int64_t id);
 };
 
 } // namespace receipt_scanner

@@ -1,5 +1,6 @@
 #include "ReceiptController.h"
 
+#include "controllers/Responses.h"
 #include "receipts/AppServices.h"
 #include "receipts/ReceiptService.h"
 #include "storage/ImageNormalizer.h"
@@ -21,59 +22,47 @@ using receipt_scanner::receipts::ReceiptService;
 using receipt_scanner::receipts::ReceiptSummary;
 using receipt_scanner::receipts::TooManyImagesError;
 using receipt_scanner::storage::ImageDecodeError;
+using http::currentUserId;
+using http::errorResponse;
+using http::jsonResponse;
+using http::nullable;
 
 constexpr size_t kMaxImageBytes = 15 * 1024 * 1024; // 15MB/image, app-layer copy of Caddy's limit (spec)
-
-drogon::HttpResponsePtr errorResponse(drogon::HttpStatusCode status, const std::string &code,
-                                       const std::string &message) {
-  nlohmann::json body{{"error", {{"code", code}, {"message", message}}}};
-  auto resp = drogon::HttpResponse::newHttpResponse();
-  resp->setStatusCode(status);
-  resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-  resp->setBody(body.dump());
-  return resp;
-}
-
-drogon::HttpResponsePtr jsonResponse(drogon::HttpStatusCode status, const nlohmann::json &body) {
-  auto resp = drogon::HttpResponse::newHttpResponse();
-  resp->setStatusCode(status);
-  resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-  resp->setBody(body.dump());
-  return resp;
-}
 
 drogon::HttpResponsePtr conflictResponse(const ImageConflict &conflict) {
   nlohmann::json body{{"error",
                         {{"code", "duplicate_image"},
                          {"message", "an image with identical content already exists"},
                          {"duplicate_of", {{"receipt_id", conflict.receiptId}, {"image_id", conflict.imageId}}}}}};
-  auto resp = drogon::HttpResponse::newHttpResponse();
-  resp->setStatusCode(drogon::k409Conflict);
-  resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-  resp->setBody(body.dump());
-  return resp;
+  return jsonResponse(drogon::k409Conflict, body);
 }
 
 nlohmann::json toJson(const ReceiptSummary &r) {
   nlohmann::json j{
       {"id", r.id},
-      {"store_name_raw", r.storeNameRaw ? nlohmann::json(*r.storeNameRaw) : nlohmann::json(nullptr)},
-      {"merchant", r.merchant ? nlohmann::json(*r.merchant) : nlohmann::json(nullptr)},
-      {"purchase_date", r.purchaseDate ? nlohmann::json(*r.purchaseDate) : nlohmann::json(nullptr)},
+      {"store_name_raw", nullable(r.storeNameRaw)},
+      {"merchant", nullable(r.merchant)},
+      {"purchase_date", nullable(r.purchaseDate)},
       {"total_cents", r.totalCents},
       {"direction", r.direction},
       {"currency", r.currency},
       {"kind", r.kind},
       {"scan_state", r.scanState},
       {"tax_deductible", r.taxDeductible},
-      {"note", r.note ? nlohmann::json(*r.note) : nlohmann::json(nullptr)},
+      {"note", nullable(r.note)},
       {"source", r.source},
+      {"payment_method_id", nullable(r.paymentMethodId)},
+      {"offsets_receipt_id", nullable(r.offsetsReceiptId)},
+      {"fx_rate_to_aud", nullable(r.fxRateToAud)},
+      {"aud_equivalent_cents", nullable(r.audEquivalentCents)},
+      {"proposed_at", nullable(r.proposedAt)},
+      {"reviewed_at", nullable(r.reviewedAt)},
+      {"needs_review", r.needsReview},
+      {"is_confirmed", r.isConfirmed},
+      {"created_at", r.createdAt},
+      {"updated_at", r.updatedAt},
   };
   return j;
-}
-
-int64_t currentUserId(const drogon::HttpRequestPtr &req) {
-  return req->attributes()->get<int64_t>("user_id");
 }
 
 // Returns nullopt (and has already written an error response via callback) if any file is
@@ -101,24 +90,18 @@ bool forceRequested(const drogon::HttpRequestPtr &req) {
   return req->getParameter("force") == "true";
 }
 
-// Shared by upload/addImages. Only the client's own mistakes get a 4xx; anything else (S3 or
-// Postgres down, a WebP encode failure) is ours -- a generic 500 with the detail logged, not
-// echoed back to the client.
+// Shared by upload/addImages: the two image-specific client errors, then the common mapping
+// (404 for a missing receipt, generic 500 for S3/Postgres/encode failures).
 drogon::HttpResponsePtr imageWriteErrorResponse(std::exception_ptr error) {
   try {
     std::rethrow_exception(error);
-  } catch (const ReceiptNotFoundError &) {
-    return errorResponse(drogon::k404NotFound, "not_found", "receipt not found");
   } catch (const TooManyImagesError &) {
     return errorResponse(drogon::k400BadRequest, "too_many_images", "this would exceed the per-receipt image cap");
   } catch (const ImageDecodeError &) {
     return errorResponse(drogon::k400BadRequest, "invalid_image", "could not decode image (JPEG, PNG or WebP expected)");
-  } catch (const std::exception &e) {
-    LOG_ERROR << "image write failed: " << e.what();
   } catch (...) {
-    LOG_ERROR << "image write failed: non-std exception";
+    return http::errorResponseFor(std::current_exception());
   }
-  return errorResponse(drogon::k500InternalServerError, "internal_error", "internal error");
 }
 
 } // namespace
@@ -241,6 +224,30 @@ drogon::Task<> ReceiptController::image(drogon::HttpRequestPtr req,
   resp->addHeader("Cache-Control", "private, max-age=31536000, immutable");
   resp->setBody(std::move(bytes));
   callback(resp);
+}
+
+drogon::Task<> ReceiptController::createManual(drogon::HttpRequestPtr req,
+                                                std::function<void(const drogon::HttpResponsePtr &)> callback) {
+  auto body = http::parseBody(req);
+  ReceiptService service(drogon::app().getDbClient(), receipts::imageStore(), receipts::imageNormalizer());
+  try {
+    auto id = co_await service.createManual(currentUserId(req), body);
+    callback(jsonResponse(drogon::k201Created, {{"id", id}}));
+  } catch (...) {
+    callback(http::errorResponseFor(std::current_exception()));
+  }
+}
+
+drogon::Task<> ReceiptController::update(drogon::HttpRequestPtr req,
+                                          std::function<void(const drogon::HttpResponsePtr &)> callback, int64_t id) {
+  auto body = http::parseBody(req);
+  ReceiptService service(drogon::app().getDbClient(), receipts::imageStore(), receipts::imageNormalizer());
+  try {
+    auto updated = co_await service.updateReceipt(currentUserId(req), id, body);
+    callback(jsonResponse(drogon::k200OK, toJson(updated)));
+  } catch (...) {
+    callback(http::errorResponseFor(std::current_exception()));
+  }
 }
 
 } // namespace receipt_scanner

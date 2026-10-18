@@ -46,7 +46,15 @@ add_library(receipt_scanner_lib OBJECT
   src/storage/ImageNormalizer.cpp
   src/receipts/ReceiptService.cpp
   src/receipts/AppServices.cpp
+  src/receipts/Kinds.cpp
+  src/receipts/JsonInput.cpp
+  src/receipts/LedgerInput.cpp
+  src/receipts/ItemService.cpp
+  src/receipts/ReferenceDataService.cpp
+  src/controllers/Responses.cpp
   src/controllers/ReceiptController.cpp
+  src/controllers/ItemController.cpp
+  src/controllers/ReferenceDataController.cpp
 )
 target_include_directories(receipt_scanner_lib PUBLIC src)
 target_link_libraries(receipt_scanner_lib PUBLIC

@@ -38,6 +38,30 @@ A context-compaction continuation gets a NEW session id — the 2026-07-11 row c
 **Known tradeoffs**
 - The per-user lock serializes one user's uploads, S3 PUTs included -- Step 12's multi-select loop runs sequentially server-side. Waiters hold a pooled DB connection (pool size 4).
 
+**Done: Step 9 (Manual entry + reference data), in one step as requested.**
+- Endpoints: `POST /receipts/manual`, `PATCH /receipts/:id`, `GET|POST /receipts/:id/items`, `PATCH|DELETE /receipts/:id/items/:item_id`, and `GET|POST /{categories,tags,payment-methods}` + `PATCH|DELETE /{...}/:id`.
+- Layout: `LedgerInput` (request bodies -> structs + the DB-free kind rules), `JsonInput` (typed field readers), `ItemService`, `ReferenceDataService` (one implementation for all three lists, parameterized by table + boolean column), `controllers/Responses` (shared envelope + exception -> status mapping: NotFound 404, Validation 400, Conflict 409, else logged 500). Request parsing is plain functions, never coroutines, so braced-init lists stay out of co_await expressions (the Step 8 GCC ICE pattern).
+- Rules enforced: direction canonical for purchase/refund/reimbursement/income, required for transfer; tax_deductible only on purchase (2b); offsets_receipt_id only from refund/reimbursement, to the user's own purchase, not itself; fx_rate_to_aud only on non-AUD, aud_equivalent_cents computed at write time (4a); income categories only on income rows and expense categories on everything else -- checked on item create/update, on a receipt kind change that crosses the income boundary, and on flipping a category's is_income while in use. Unknown body keys are rejected (400) rather than ignored.
+- Tenant isolation: items have no user_id, so every item route resolves the receipt under the session user first. The FKs (payment_method_id, category_id, tag_id, offsets_receipt_id) don't check tenancy, so the services check each referenced id belongs to the user -- tested per reference type.
+- Migration `20261018000000_unique_reference_names.sql`: unique (user_id, lower(name)) on tags and payment_methods, (user_id, is_income, lower(name)) on categories. Needed because Step 11 embeds names as JSON-schema enums; per-side for categories because the scanner only embeds one side.
+- Receipt reads (`getReceipt`/`listReceipts`/PATCH response) now select through `v_receipt_state` with an explicit column list, exposing needs_review/is_confirmed (single-sourced in the view), reviewed_at/proposed_at/created_at/updated_at as ISO-8601 UTC, plus payment_method_id, offsets_receipt_id, fx fields.
+- Verified: 17 new test cases (incl. the kinds drift test) -- 49 total / 283 assertions, passing under both Clang and GCC (`docker build --build-arg BUILD_JOBS=2 --target build`; unbounded `-j` OOM-killed cc1plus in Docker Desktop's 4GB VM and took the daemon down), `scripts/smoke-test-ledger.sh` against the native server (29 HTTP checks incl. `GET /receipts/manual` -> 405, malformed JSON -> 400, envelope shape, 401 without session).
+- Found while smoke-testing: macOS's bash 3.2 brace-expands an escaped-quote `"{...,...}"` nested inside `"$(...)"`, splitting JSON at its commas -- the smoke script builds dynamic bodies in variables first.
+
+**Open questions raised by Step 9**
+- Zero-decimal currencies -- DECIDED: `*_cents` is 1/100 of the main unit for every currency (¥2000 = 200000); recorded in spec Money. Found because ¥2000 sent as 2000 computed an AUD equivalent of $0.20 instead of $20.40. Floats were raised as an alternative and rejected (sum drift, exact-total dedupe).
+- Total vs items -- DECIDED (7c): total stays authoritative; editing a manual entry's total doesn't touch its implicit item, the client updates both. Deriving the total from items was proposed and rejected (recorded in spec, Price-component extensibility); proportional allocation in the views was the alternative not chosen.
+
+**Follow-ups from the user's partial review (same day)**
+- `Kinds.h/.cpp` (new): a constexpr `kKinds` table (name, canonical direction, allows tax_deductible, can offset / is offset target, uses income categories) is now the single C++ source for the kind and direction domains. Every former literal check derives from it, incl. the provisional upload kind and the SQL `IN (...)` list in the is_income flip check. The DB's CHECK constraints stay an independent copy; the new "kinds:" test parses `pg_get_constraintdef` and probes each kind x direction x tax_deductible against Postgres. Mutation-tested: flipping transfer's allowsTaxDeductible fails it.
+- Brief header comments added to every non-trivial function in the Step 9 code.
+- `json_input::setIfPresent(body, key, target, reader)`: each request field's key is now spelled once at the call site (was three times: `contains`, `body[...]`, and the error-message name).
+- Decided not to change: `static` for file-local helpers -- they stay in anonymous namespaces (codebase convention; `static` already means member/local-static in the same files). Strong id types / `enum class Kind` were proposed (plain aliases give no swap protection) and the user dropped the idea.
+
+**Review status (Step 9 -- committed at the user's go-ahead before the remainder was reviewed; review continues post-commit, as with Step 8)**
+- Reviewed by the user: `src/receipts/ItemService.{h,cpp}`, `JsonInput.{h,cpp}`, `LedgerInput.{h,cpp}`, `ReceiptService.{h,cpp}` -- but each has changed since (Kinds refactor + header comments), so re-check those deltas.
+- Still to review: `src/receipts/Kinds.{h,cpp}` (new since review), `ReferenceDataService.{h,cpp}`, `Errors.h`, `RowValues.h`; `src/controllers/Responses.{h,cpp}`, `ItemController.{h,cpp}`, `ReferenceDataController.{h,cpp}`, `ReceiptController.{h,cpp}`; `db/migrations/20261018000000_unique_reference_names.sql`; `tests/ledger_test.cpp`, `tests/CMakeLists.txt`, `CMakeLists.txt`; `scripts/smoke-test-ledger.sh`; `Dockerfile` (BUILD_JOBS arg); the spec/plan/log edits.
+
 ## 2026-10-12 (same session as 2026-10-05, resumed after a pause)
 
 **Done: root-caused and fixed the GCC-only `deleteReceipt` CI failure from 2026-10-05.**

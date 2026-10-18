@@ -1,10 +1,13 @@
 #pragma once
 
+#include "receipts/Errors.h"
+#include "receipts/LedgerInput.h"
 #include "storage/ImageNormalizer.h"
 #include "storage/ImageStore.h"
 
 #include <drogon/orm/DbClient.h>
 #include <drogon/utils/coroutine.h>
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -37,6 +40,18 @@ struct ReceiptSummary {
   bool taxDeductible;
   std::optional<std::string> note;
   std::string source;
+  std::optional<int64_t> paymentMethodId;
+  std::optional<int64_t> offsetsReceiptId;
+  std::optional<double> fxRateToAud;
+  std::optional<int64_t> audEquivalentCents;
+  // ISO-8601 UTC. needsReview/isConfirmed come from v_receipt_state, the single source for the
+  // timestamp predicates (spec Invariants) -- never recomputed here.
+  std::optional<std::string> proposedAt;
+  std::optional<std::string> reviewedAt;
+  bool needsReview;
+  bool isConfirmed;
+  std::string createdAt;
+  std::string updatedAt;
 };
 
 struct ImageRef {
@@ -47,16 +62,6 @@ struct ImageRef {
 struct ImageLocation {
   int64_t ownerUserId;
   std::string imageKey;
-};
-
-class ReceiptNotFoundError : public std::runtime_error {
-public:
-  ReceiptNotFoundError() : std::runtime_error("receipt not found") {}
-};
-
-class TooManyImagesError : public std::runtime_error {
-public:
-  TooManyImagesError() : std::runtime_error("image cap exceeded") {}
 };
 
 // Business logic, deliberately independent of HTTP/Drogon controllers (same reasoning as
@@ -86,7 +91,23 @@ public:
   drogon::Task<std::variant<std::monostate, ImageConflict>> addImages(int64_t userId, int64_t receiptId,
                                                                        std::vector<std::string> images, bool force);
 
+  // POST /receipts/manual: a cash/no-receipt transaction, any of the five kinds. Born reviewed
+  // (reviewed_at = now, proposed_at NULL, source = manual) so it counts immediately. Writes one
+  // implicit item (name = merchant, amount = total, category = category_id) unless explicit
+  // `items` are sent. purchase_date defaults to today in Australia/Sydney. Throws
+  // ValidationError, incl. for a payment method / category / offset target / tag that isn't
+  // userId's.
+  drogon::Task<int64_t> createManual(int64_t userId, const nlohmann::json &body);
+
+  // PATCH /receipts/:id: partial edit (see applyReceiptPatch). Editing never touches
+  // reviewed_at, so a reviewed receipt stays reviewed (spec Review); "reviewed": true stamps it.
+  // A kind change that would leave a categorized item on the wrong expense/income side is
+  // rejected. Throws ReceiptNotFoundError, ValidationError.
+  drogon::Task<ReceiptSummary> updateReceipt(int64_t userId, int64_t receiptId, const nlohmann::json &body);
+
+  // nullopt if missing or not userId's.
   drogon::Task<std::optional<ReceiptSummary>> getReceipt(int64_t userId, int64_t receiptId);
+  // Newest first, offset-paginated.
   drogon::Task<std::vector<ReceiptSummary>> listReceipts(int64_t userId, int limit, int offset);
 
   // Throws ReceiptNotFoundError if receiptId isn't owned by userId (callers translate to a
@@ -126,6 +147,12 @@ private:
                                                           int64_t userId, const std::vector<PreparedImage> &prepared);
   drogon::Task<> storeImages(const std::shared_ptr<drogon::orm::Transaction> &transaction, int64_t userId, int64_t receiptId,
                              const std::vector<PreparedImage> &prepared);
+
+  // The ownership checks shared by createManual and updateReceipt: payment method and offset
+  // target must be userId's, and the offset target a purchase other than the receipt itself
+  // (receiptId is nullopt on create).
+  drogon::Task<> validateReferences(const std::shared_ptr<drogon::orm::Transaction> &transaction, int64_t userId,
+                                    std::optional<int64_t> receiptId, const EditableReceipt &receipt);
 };
 
 } // namespace receipt_scanner::receipts

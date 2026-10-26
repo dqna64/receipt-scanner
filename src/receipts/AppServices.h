@@ -11,7 +11,7 @@ namespace receipt_scanner::receipts {
 // of abandoning isAutoCreation, which would make this controller diverge from every other
 // one in the codebase for no real benefit. Constructed on first use (the first request that
 // needs them), by which point drogon::app().run() has already started -- S3ImageStore's
-// HttpClient needs a running trantor::EventLoop (see Step 6's S3ImageStore ctor comment).
+// HttpClient needs a running trantor::EventLoop (see the S3ImageStore constructor comment).
 storage::ImageNormalizer &imageNormalizer();
 storage::S3ImageStore &imageStore();
 

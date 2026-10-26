@@ -6,7 +6,7 @@
 # glibc ABI matches across the COPY --from boundary.
 #
 # Builds for whatever platform invokes `docker build` (no --platform flag here): arm64
-# natively on Apple Silicon for local dev, amd64 in CI (Step 3) for the deploy image.
+# natively on Apple Silicon for local dev, amd64 in CI for the deploy image.
 # Never cross-build the amd64 image on the Mac — that's what CI is for.
 
 FROM debian:bookworm AS build
@@ -39,7 +39,7 @@ ARG BUILD_JOBS
 
 # Cache mount: vcpkg's compiled-package cache would otherwise live only in this throwaway
 # build layer and be recompiled from scratch (~10 min, incl. Drogon) on every Dockerfile
-# change. This persists it across builds — the CI equivalent of Step 3's vcpkg binary cache.
+# change. This persists it across builds — the equivalent of CI's vcpkg binary cache.
 RUN --mount=type=cache,target=/root/.cache/vcpkg/archives \
     cmake -S . -B build \
       -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake \
@@ -48,8 +48,8 @@ RUN --mount=type=cache,target=/root/.cache/vcpkg/archives \
     && cmake --build build -j ${BUILD_JOBS}
 
 FROM debian:bookworm-slim AS runtime
-# vcpkg's community Linux triplets (arm64-linux, x64-linux) default to STATIC linking —
-# verified 2026-09-05: the built binary's only dynamic deps are libstdc++/libm/libgcc_s/libc,
+# vcpkg's community Linux triplets (arm64-linux, x64-linux) default to STATIC linking,
+# so the built binary's only dynamic deps are libstdc++/libm/libgcc_s/libc,
 # all standard and already present below. No vcpkg .so/.a files need copying at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*

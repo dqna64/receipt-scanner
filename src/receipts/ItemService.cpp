@@ -83,8 +83,10 @@ drogon::Task<> replaceTags(const std::shared_ptr<drogon::orm::Transaction> &tran
 
 drogon::Task<> ItemService::requireCategoryFitsKind(const std::shared_ptr<drogon::orm::Transaction> &transaction,
                                                     int64_t userId, int64_t categoryId, const std::string &kind) {
-  auto result =
-      co_await transaction->execSqlCoro("SELECT is_income FROM categories WHERE id = $1 AND user_id = $2", categoryId, userId);
+  // FOR SHARE: holds off a concurrent is_income flip (CategoryService::update locks the row FOR
+  // UPDATE) until this item write commits, so the fit checked here is the fit that's stored.
+  auto result = co_await transaction->execSqlCoro(
+      "SELECT is_income FROM categories WHERE id = $1 AND user_id = $2 FOR SHARE", categoryId, userId);
   if (result.empty()) {
     throw ValidationError("category_id does not exist");
   }
@@ -100,7 +102,7 @@ drogon::Task<int64_t> ItemService::insert(const std::shared_ptr<drogon::orm::Tra
     co_await requireCategoryFitsKind(transaction, userId, *item.categoryId, receiptKind);
   }
   // quantity is NUMERIC; the explicit ::float8 matches the 8-byte double Drogon binds (same
-  // param-size trap as Step 8's LIMIT/OFFSET).
+  // param-size trap as the LIMIT/OFFSET casts in ReceiptService::listReceipts).
   auto result = co_await transaction->execSqlCoro(
       "INSERT INTO items (receipt_id, name, quantity, unit_price_cents, amount_cents, category_id, informational) "
       "VALUES ($1, $2, $3::float8, $4, $5, $6, $7) RETURNING id",

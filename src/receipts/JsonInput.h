@@ -12,7 +12,7 @@
 // Typed field readers for request bodies. Each throws receipts::ValidationError with a message
 // naming the field. Plain functions, never coroutines: request parsing stays out of coroutine
 // bodies so braced-init lists (allowed-key lists, json literals) never sit in a co_await
-// expression -- the GCC 12/13 ICE pattern from Step 8.
+// expression, which crashes GCC 12/13 (internal compiler error in build_special_member_call).
 namespace receipt_scanner::receipts::json_input {
 
 void requireObject(const nlohmann::json &body);

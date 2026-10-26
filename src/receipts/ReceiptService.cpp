@@ -3,10 +3,13 @@
 #include "auth/TokenUtils.h"
 #include "config/Env.h"
 #include "receipts/ItemService.h"
+#include "receipts/ReceiptStates.h"
 #include "receipts/RowValues.h"
 
 #include <drogon/drogon.h>
 #include <sodium.h>
+
+#include <algorithm>
 
 namespace receipt_scanner::receipts {
 
@@ -28,7 +31,7 @@ std::string sha256Hex(const std::string &data) {
   return out;
 }
 
-// MAX_IMAGES_PER_RECEIPT (default 8): the add-time cap on a receipt's image count (decided 1a).
+// MAX_IMAGES_PER_RECEIPT (default 8): the add-time cap on a receipt's image count.
 int maxImagesPerReceipt() {
   return std::stoi(receipt_scanner::config::envOr("MAX_IMAGES_PER_RECEIPT", "8"));
 }
@@ -184,12 +187,13 @@ drogon::Task<std::variant<int64_t, ImageConflict>> ReceiptService::uploadReceipt
       }
     }
 
-    // Provisional kind/direction (spec: "receipts.kind: purchase (default)") -- Step 10's
-    // scanner overwrites these once it classifies the actual document type.
+    // Provisional kind/direction (spec: "receipts.kind: purchase (default)") -- the scan
+    // overwrites these once it classifies the actual document type.
     auto receiptResult = co_await transaction->execSqlCoro(
         "INSERT INTO receipts (user_id, kind, direction, source, scan_state) "
-        "VALUES ($1, $2, $3, 'scanned', 'uploaded') RETURNING id",
-        userId, provisionalKind, provisionalDirection);
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        userId, provisionalKind, provisionalDirection, std::string(source::kScanned),
+        std::string(scan_state::kUploaded));
     auto receiptId = receiptResult[0]["id"].as<int64_t>();
 
     co_await storeImages(transaction, userId, receiptId, prepared);
@@ -232,10 +236,9 @@ drogon::Task<std::variant<std::monostate, ImageConflict>> ReceiptService::addIma
     }
 
     co_await storeImages(transaction, userId, receiptId, prepared);
-    // Sets the receipt up for the Step 10 worker to (re-)scan the FULL image set once it
-    // exists; until then this just parks at scan_state=uploaded, per spec (explicitly
-    // expected: "until Step 10 lands it just parks there").
-    co_await transaction->execSqlCoro("UPDATE receipts SET scan_state = 'uploaded' WHERE id = $1", receiptId);
+    // Queues the receipt for the scan worker, which (re-)scans its FULL image set.
+    co_await transaction->execSqlCoro("UPDATE receipts SET scan_state = $1 WHERE id = $2",
+                                      std::string(scan_state::kUploaded), receiptId);
     co_return std::monostate{};
   } catch (...) {
     transaction->rollback();
@@ -285,9 +288,10 @@ drogon::Task<int64_t> ReceiptService::createManual(int64_t userId, const nlohman
         "payment_method_id, tax_deductible, note, offsets_receipt_id, fx_rate_to_aud, aud_equivalent_cents, "
         "source, scan_state, reviewed_at) "
         "VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::date, (now() AT TIME ZONE 'Australia/Sydney')::date), "
-        "$8, $9, $10, $11, $12::float8, $13, 'manual', 'idle', now()) RETURNING id",
+        "$8, $9, $10, $11, $12::float8, $13, $14, $15, now()) RETURNING id",
         userId, r.kind, r.direction, r.totalCents, r.currency, r.merchant, r.purchaseDate, r.paymentMethodId,
-        r.taxDeductible, r.note, r.offsetsReceiptId, r.fxRateToAud, audEquivalent);
+        r.taxDeductible, r.note, r.offsetsReceiptId, r.fxRateToAud, audEquivalent, std::string(source::kManual),
+        std::string(scan_state::kIdle));
     auto receiptId = result[0]["id"].as<int64_t>();
 
     if (input.items.empty()) {
@@ -328,11 +332,16 @@ drogon::Task<ReceiptSummary> ReceiptService::updateReceipt(int64_t userId, int64
     co_await validateReferences(transaction, userId, receiptId, r);
     const bool isIncomeSide = rulesFor(r.kind).usesIncomeCategories;
     if (isIncomeSide != wasIncomeSide) {
-      auto clash = co_await transaction->execSqlCoro(
-          "SELECT 1 FROM items i JOIN categories c ON c.id = i.category_id "
-          "WHERE i.receipt_id = $1 AND c.is_income <> $2 LIMIT 1",
-          receiptId, isIncomeSide);
-      if (!clash.empty()) {
+      // Every category on the receipt's items, locked FOR SHARE so none can flip its is_income
+      // while this kind change commits (see CategoryService::update).
+      auto itemCategories = co_await transaction->execSqlCoro(
+          "SELECT c.is_income FROM items i JOIN categories c ON c.id = i.category_id "
+          "WHERE i.receipt_id = $1 FOR SHARE OF c",
+          receiptId);
+      const bool clash = std::any_of(itemCategories.begin(), itemCategories.end(), [&](const drogon::orm::Row &row) {
+        return row["is_income"].as<bool>() != isIncomeSide;
+      });
+      if (clash) {
         throw ValidationError("this kind change would leave items in the wrong expense/income categories -- "
                               "recategorize them first");
       }
@@ -354,6 +363,21 @@ drogon::Task<ReceiptSummary> ReceiptService::updateReceipt(int64_t userId, int64
     transaction->rollback();
     throw;
   }
+}
+
+drogon::Task<ReceiptSummary> ReceiptService::retryScan(int64_t userId, int64_t receiptId) {
+  auto requeued = co_await db_->execSqlCoro(
+      "UPDATE receipts SET scan_state = $1, scan_attempts = 0, reclaim_count = 0, updated_at = now() "
+      "WHERE id = $2 AND user_id = $3 AND scan_state = $4 RETURNING id",
+      std::string(scan_state::kUploaded), receiptId, userId, std::string(scan_state::kScanFailed));
+  auto receipt = co_await getReceipt(userId, receiptId);
+  if (!receipt) {
+    throw ReceiptNotFoundError();
+  }
+  if (requeued.empty()) {
+    throw ConflictError("only a receipt in scan_failed can be retried");
+  }
+  co_return *receipt;
 }
 
 drogon::Task<std::optional<ReceiptSummary>> ReceiptService::getReceipt(int64_t userId, int64_t receiptId) {

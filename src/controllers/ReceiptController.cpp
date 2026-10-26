@@ -250,4 +250,16 @@ drogon::Task<> ReceiptController::update(drogon::HttpRequestPtr req,
   }
 }
 
+drogon::Task<> ReceiptController::retryScan(drogon::HttpRequestPtr req,
+                                             std::function<void(const drogon::HttpResponsePtr &)> callback,
+                                             int64_t id) {
+  ReceiptService service(drogon::app().getDbClient(), receipts::imageStore(), receipts::imageNormalizer());
+  try {
+    auto receipt = co_await service.retryScan(currentUserId(req), id);
+    callback(jsonResponse(drogon::k200OK, toJson(receipt)));
+  } catch (...) {
+    callback(http::errorResponseFor(std::current_exception()));
+  }
+}
+
 } // namespace receipt_scanner

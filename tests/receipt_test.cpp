@@ -27,7 +27,7 @@ namespace {
 
 // Same process-lifetime-resource rationale as every other integration test in this suite
 // (db_test.cpp, image_store_test.cpp): fresh DbClient/EventLoopThread per TEST_CASE risks
-// the destructor-deadlock pattern found in Step 4/6. One of each, shared across this file.
+// a destructor deadlock (a DbClient/EventLoopThread torn down while still in use). One of each, shared across this file.
 const drogon::orm::DbClientPtr &testDb() {
   static drogon::orm::DbClientPtr client = drogon::orm::DbClient::newPgClient(
       "host=" + envOr("DB_HOST", "localhost") + " port=" + envOr("DB_PORT", "5432") +

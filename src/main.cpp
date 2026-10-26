@@ -1,5 +1,6 @@
 #include "auth/SodiumInit.h"
 #include "config/Env.h"
+#include "scan/ScanServices.h"
 #include "storage/VipsInit.h"
 
 #include <drogon/drogon.h>
@@ -24,10 +25,10 @@ int main() {
   receipt_scanner::auth::ensureSodiumInitialized();
   receipt_scanner::storage::initVips("receipt_scanner");
 
-  // Step 8: a receipt can carry up to MAX_IMAGES_PER_RECEIPT images (default 8) at 15MB
+  // A receipt can carry up to MAX_IMAGES_PER_RECEIPT images (default 8) at 15MB
   // each (spec Upload constraints) -- generous headroom over that worst case for multipart
   // framing overhead. Caddy enforces its own copy of the per-file limit in front of this
-  // (Step 2/18); this is the app-layer backstop.
+  // (docker-compose); this is the app-layer backstop.
   drogon::app().setClientMaxBodySize(130 * 1024 * 1024);
 
   drogon::orm::PostgresConfig dbConfig{
@@ -47,6 +48,9 @@ int main() {
   drogon::app().addDbClient(dbConfig);
 
   drogon::app().addListener("0.0.0.0", 8080).setThreadNum(4);
+  // The scan worker's poll timer needs the running main loop (and the DB client and
+  // S3 store, which come up with it), hence a beginning advice rather than starting it here.
+  drogon::app().registerBeginningAdvice([] { receipt_scanner::scan::startScanWorker(); });
   drogon::app().run();
   return 0;
 }

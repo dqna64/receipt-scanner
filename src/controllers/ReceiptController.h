@@ -27,6 +27,8 @@ public:
                 "receipt_scanner::filters::SessionAuthFilter");
   ADD_METHOD_TO(ReceiptController::update, "/api/v1/receipts/{1}", drogon::Patch,
                 "receipt_scanner::filters::SessionAuthFilter");
+  ADD_METHOD_TO(ReceiptController::retryScan, "/api/v1/receipts/{1}/retry-scan", drogon::Post,
+                "receipt_scanner::filters::SessionAuthFilter");
   METHOD_LIST_END
 
   drogon::Task<> upload(drogon::HttpRequestPtr req, std::function<void(const drogon::HttpResponsePtr &)> callback);
@@ -45,6 +47,8 @@ public:
                                std::function<void(const drogon::HttpResponsePtr &)> callback);
   drogon::Task<> update(drogon::HttpRequestPtr req, std::function<void(const drogon::HttpResponsePtr &)> callback,
                          int64_t id);
+  drogon::Task<> retryScan(drogon::HttpRequestPtr req,
+                            std::function<void(const drogon::HttpResponsePtr &)> callback, int64_t id);
 };
 
 } // namespace receipt_scanner

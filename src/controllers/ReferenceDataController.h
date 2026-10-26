@@ -5,8 +5,8 @@
 
 namespace receipt_scanner {
 
-// Categories, tags and payment methods: the same four routes each, all backed by
-// ReferenceDataService. Drogon binds one member function per route, hence the thin wrappers.
+// Categories, tags and payment methods: list / create / update / delete each, backed by
+// CategoryService, TagService and PaymentMethodService.
 class ReferenceDataController : public drogon::HttpController<ReferenceDataController> {
 public:
   using Callback = std::function<void(const drogon::HttpResponsePtr &)>;

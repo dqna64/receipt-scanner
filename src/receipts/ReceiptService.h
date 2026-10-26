@@ -76,7 +76,7 @@ public:
   // normalized + hashed + dedup-checked BEFORE anything is written (not even to S3) if
   // force is false -- a rejected upload truly writes nothing. On success, returns the new
   // receipt's id; kind/direction are the provisional 'purchase'/'outflow' defaults (spec:
-  // "receipts.kind: purchase (default)") until Step 10's scanner classifies the document.
+  // "receipts.kind: purchase (default)") until the scan classifies the document.
   // All-or-nothing on the DB side: any failure mid-batch rolls back the receipt and every
   // image row. Throws TooManyImagesError past the per-receipt cap (see addImages),
   // storage::ImageDecodeError for undecodable bytes.
@@ -85,9 +85,9 @@ public:
 
   // POST /receipts/:id/images: adds images to an existing receipt (imageless or not).
   // Throws ReceiptNotFoundError if receiptId isn't owned by userId. Throws
-  // TooManyImagesError if adding would exceed the configured per-receipt cap (spec decided
-  // 1a -- an add-time-only cap on LLM vision cost, not a storage limit; merge is exempt,
-  // but merge doesn't exist yet -- Step 14). Same all-or-nothing rollback as uploadReceipt.
+  // TooManyImagesError if adding would exceed the configured per-receipt cap (an add-time
+  // cap on LLM vision cost, not a storage limit; merge is exempt). Same all-or-nothing
+  // rollback as uploadReceipt.
   drogon::Task<std::variant<std::monostate, ImageConflict>> addImages(int64_t userId, int64_t receiptId,
                                                                        std::vector<std::string> images, bool force);
 
@@ -104,6 +104,11 @@ public:
   // A kind change that would leave a categorized item on the wrong expense/income side is
   // rejected. Throws ReceiptNotFoundError, ValidationError.
   drogon::Task<ReceiptSummary> updateReceipt(int64_t userId, int64_t receiptId, const nlohmann::json &body);
+
+  // POST /receipts/:id/retry-scan: re-queues a scan_failed receipt with fresh budgets (both
+  // scan_attempts and reclaim_count reset -- the user is explicitly asking for another go).
+  // Throws ReceiptNotFoundError, or ConflictError if it isn't in scan_failed.
+  drogon::Task<ReceiptSummary> retryScan(int64_t userId, int64_t receiptId);
 
   // nullopt if missing or not userId's.
   drogon::Task<std::optional<ReceiptSummary>> getReceipt(int64_t userId, int64_t receiptId);

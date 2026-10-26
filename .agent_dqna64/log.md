@@ -6,6 +6,8 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-10-26 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
+| 2026-10-19 | 5df2ebae-d65c-4213-9fb3-f4d2f2e3af8f | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-18 | 5df2ebae-d65c-4213-9fb3-f4d2f2e3af8f | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-05 | a9f8cf64-3eab-4d25-a362-794f65db64e3 | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-09-05 | (remote-control session — fill from Claude Code UUID) | Claude | /Users/me/receipt-scanner | (this machine) |
@@ -18,6 +20,49 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 | 2026-07-09 | cfefe238-3b8b-451c-93fe-f6aab5c18730 | Claude | /Users/me/receipt-scanner | motorway1.local |
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
+
+## 2026-10-26 (local Docker slimmed; Step 10 hang fix, compaction continuation of 5df2ebae)
+
+**Done**
+- Docker usable again on the laptop: Docker Desktop VM cut from 4 GB / 4 CPUs to 2 GB / 2 CPUs (8 GB M1); only postgres + minio run locally (~125 MB together), no local `docker build` (GCC stays in CI). Recorded in CLAUDE.md and the machine log; committed e5bf0ad (not pushed). The pre-push hook works again; pushed cb74acc.
+- Step 10 fix (uncommitted, part of the Step 10 diff): a provider call that never returned leaked the worker's in-process `inFlight_` slots forever (and, since a tick scanned its claims sequentially, blocked its sibling claims too) -- after one hang with concurrency 2 the worker claimed nothing until restart. Now free slots are counted from rows in `scanning` inside the claim statement (a hung scan's slot frees when reclaimStuck re-queues its row; the cap is global across processes and soft under racing claims), and a tick runs its claims concurrently via `drogon::when_all`. New test "a hung scan blocks neither its siblings nor later claims once reclaimed"; reverting to sequential processing fails it. Clang: 61/61. GCC not run.
+- Review follow-ups (user-approved): a receipt found with no images goes straight to scan_failed (one attempt spent, provider never called) instead of burning all 3 attempts; VERIFY_DATE_TOLERANCE_DAYS renamed MATCH_DATE_DAYS and recorded in spec as the window shared by verify-scan and Step 14 dedupe; stale-claim comments now say "re-queued" / "claimed again" instead of reclaimed/re-claimed. Measured pg_trgm similarity on real merchant pairs: 0.3 gives false mismatches ("Woolies"/"Woolworths" 0.27) and false matches ("Chemist Warehouse"/"Bunnings Warehouse" 0.37) -- threshold to be set from the golden set. Date "different month" mismatch rule considered and declined.
+- Committed Step 9 follow-ups + Step 10 together (the two diffs share ReceiptService/ledger_test hunks, so a split commit would have been an unbuilt intermediate state).
+
+## 2026-10-24 (Step 9 review follow-ups, same session)
+
+**Done (uncommitted, on top of the uncommitted Step 10 work)**
+- Reference data split from one `ReferenceDataService` (parameterized by a `ReferenceKind` + table/column names spliced into SQL) into `CategoryService`, `TagService`, `PaymentMethodService`, each with its own literal SQL; `ReferenceDataController` calls them through named handlers. User's call: the shared version wasn't worth the abstraction, and categories already diverge (is_income flip guard, per-side uniqueness).
+- Category update is now one transaction holding the category row FOR UPDATE across the is_income flip check and the write. To make that actually race-free, the item side takes FOR SHARE on the category: `ItemService::requireCategoryFitsKind` and the receipt kind-change check in `ReceiptService::updateReceipt` (which now reads all of the receipt's item categories FOR SHARE and checks in C++). Tag rename and payment-method partial update are single statements (`COALESCE` for absent fields). Not tested concurrently -- the locking is by construction.
+- Comment sweep over every file touched this session: removed decision labels ("decided 2b"), plan-step references ("Step 8's ICE", "until Step 11"), dates and log pointers; kept "spec X" section pointers. Older files (AuthService, S3ImageStore, Sigv4Signer, db_test, ...) still have them.
+- Spec: "cash" = physical cash, deletable, no server-side default (decided); quick-add's cash default flagged as a poor fit for a debit-card-first user.
+- New test: tag rename (+ case-insensitive duplicate -> 409, other tenant -> 404) and payment-method partial update. Clang: 60 test cases / 370 assertions. GCC not run.
+
+**Environment**
+- The user can't run Docker on this laptop (too slow; it lags the machine). Containers stopped (`docker compose down`, volumes kept) and Docker Desktop quit. Consequence: no local integration tests (they need Postgres + MinIO), no local GCC runs, and the pre-push hook (which requires both compose services) blocks every push. Decision pending on how to test from here.
+- `build/` was reconfigured without the vcpkg toolchain again (12:39, very likely VS Code CMake Tools) -- reset its CMake cache a second time.
+
+## 2026-10-19 (Step 10, same session)
+
+**Done: Step 10 (Worker + FakeScanProvider), uncommitted pending review.**
+- New `src/scan/`: `ScanProvider.h` (boundary: `scanReceipt(images, ScanContext) -> ScanResult`; `ScanContext` carries the row's known kind in verify mode and the user's own category/tag names as the future schema enums; `ScanError` = provider/parse failure), `FakeScanProvider` (canned result by default, scriptable coroutine handler for tests, records image counts), `MerchantMatcher` + `PgTrgmMerchantMatcher` (decided 3a; reused by Step 14), `ScanWorker`, `ScanServices` (lazy singletons + poll timer). New `src/notify/Notifier.h` (+ `NoopNotifier`, decided 1d). `POST /receipts/:id/retry-scan`.
+- Worker flow per tick: reclaim scans stuck > SCAN_RECLAIM_SECONDS (re-queue, reclaim_count++, scan_failed at the backstop) -> claim up to (concurrency - in flight) uploaded rows, oldest first, via `UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)` -> per row: load images (full set, in order) + the user's taxonomy, call the provider, validate the result, write. Ticks run every SCAN_POLL_SECONDS from a beginning advice; overlapping ticks give the parallelism, the in-flight counter caps it.
+- Claim token: `scan_started_at` as written by the claim. Every later read/write requires it unchanged, so a scan that was reclaimed (and maybe re-claimed by another tick) while its provider call was in flight can't apply its stale result. Mutation-tested: dropping the token check fails the stale-claim test (3 of 4 assertions).
+- Mode is decided at WRITE time from the row as it is then (the user may review it mid-scan), not at claim time. Verify's comparison needs the matcher's own query, so it runs before the write transaction; the write re-reads the row under FOR UPDATE and starts over (once) if updated_at / reviewed state / item count changed in between.
+- Extraction (unreviewed): the scan's kind/direction/total/currency/merchant/store name/date replace the row's, items replaced; tax_deductible cleared unless the scanned kind allows it (it's also a DB CHECK), offsets_receipt_id cleared unless the kind can offset. Category/tag names map case-insensitively to the user's ids; a wrong-side or unknown category leaves the item uncategorized instead of failing the scan.
+- Verify (reviewed): never overwrites -- fills merchant/store name/date only if empty, items only if the receipt has none, keeps the row's kind; compares total (exact, and same currency), date (within VERIFY_DATE_TOLERANCE_DAYS), merchant (similarity >= MERCHANT_MATCH_THRESHOLD), each only if the row had a value. All match -> reviewed_at re-stamped with proposed_at (stays confirmed); else proposed_at leads (needs_review).
+- Failures: ScanError -> scan_attempts (cap 3); anything else (S3, Postgres, a row that kept changing) -> reclaim_count, same backstop as timeouts. Terminal scan_failed touches neither timestamp and calls `Notifier::notify(user, "scan_failed", {receipt_id, reason})` once.
+- `ReceiptStates.h`: scan_state + source single-sourced (remaining literals in src/ replaced); the drift test now also checks receipts_scan_state_check / receipts_source_check.
+- Config: SCAN_PROVIDER, SCAN_POLL_SECONDS, SCAN_CONCURRENCY, SCAN_MAX_ATTEMPTS, SCAN_MAX_RECLAIMS, SCAN_RECLAIM_SECONDS, VERIFY_DATE_TOLERANCE_DAYS, MERCHANT_MATCH_THRESHOLD -- in .env.example and docker-compose.yml (which was also missing MAX_IMAGES_PER_RECEIPT since Step 8).
+- Verified: 10 new test cases (59 total / 364 assertions, passing under both Clang and GCC -- the GCC run waited on the user freeing host disk: Docker's VM disk had filled the last 3 GB and gone read-only) covering extraction with a 2-image receipt reaching the fake as a 2-element list, verify match / mismatch, attempts -> scan_failed + one notification with timestamps untouched, kill-mid-scan reclaim without spending an attempt, reclaim backstop, stale-claim discard, concurrency cap + FIFO, kind-constrained field reconciliation, retry-scan (state + tenant checks). End-to-end against the real server: an HTTP upload was scanned by the timer-driven worker within 4s (SCAN_POLL_SECONDS=1).
+- Environment, not code: the Mac sleeping mid-run froze test processes for hours and left Docker's VM clock skewed, so MinIO rejected requests with RequestTimeTooSkewed (9 failures in one run, all in bucket setup). Re-ran while awake: all green. `caffeinate -i` doesn't prevent lid-closed sleep.
+
+**Defaults chosen where the spec is silent -- pending the user's confirmation, then fold into spec**
+- Verify-mismatch "diff": no new column. `raw_ocr_json` always holds the LATEST scan (it's machine evidence, so replacing it isn't "overwriting user values"), and the review screen (Step 13) computes scanned-vs-recorded from it.
+- VERIFY_DATE_TOLERANCE_DAYS=3 (spec: "± dedupe tolerance", never given a number); MERCHANT_MATCH_THRESHOLD=0.3 (pg_trgm's own default); SCAN_MAX_RECLAIMS=10 (spec: "high backstop").
+- Verify fills any empty scannable field (merchant, store name, date, items-if-none), not just the three the spec lists; a currency mismatch counts as a total mismatch.
+- Non-provider failures (S3/Postgres errors mid-scan) spend reclaim_count, not scan_attempts.
+- retry-scan resets BOTH budgets (scan_attempts and reclaim_count).
 
 ## 2026-10-18 (Step 8 review + follow-up fixes)
 

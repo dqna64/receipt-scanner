@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Walks the Step 9 HTTP surface -- manual entry, PATCH, items, reference data -- against a
+# Walks the ledger HTTP surface -- manual entry, PATCH, items, reference data -- against a
 # running server (default: localhost:8080). Covers what the service-level tests can't: routing
 # (incl. POST /receipts/manual next to /receipts/{id}), PATCH binding, and the error envelope.
 # Assumes Postgres is up and migrated, and the server is already running.

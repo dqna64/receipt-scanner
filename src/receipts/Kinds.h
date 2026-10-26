@@ -17,7 +17,7 @@ namespace receipt_scanner::receipts {
 struct KindRules {
   std::string_view name;
   std::optional<std::string_view> canonicalDirection; // nullopt: set freely (a transfer goes either way)
-  bool allowsTaxDeductible;                            // decided 2b
+  bool allowsTaxDeductible;                            // only purchases
   bool canOffset;                                      // may set offsets_receipt_id...
   bool isOffsetTarget;                                 // ...pointing at a receipt of this kind
   bool usesIncomeCategories;                           // else expense categories (spec Review)
@@ -39,7 +39,7 @@ inline constexpr std::array<KindRules, 5> kKinds{{
 inline constexpr std::array<std::string_view, 2> kDirections{"inflow", "outflow"};
 
 // Spec: "receipts.kind: purchase (default)" -- manual entry's default, and an upload's
-// provisional kind until Step 10's scanner classifies the document.
+// provisional kind until the scanner classifies the document.
 inline constexpr std::string_view kDefaultKind = "purchase";
 
 // nullptr if `kind` isn't in kKinds.

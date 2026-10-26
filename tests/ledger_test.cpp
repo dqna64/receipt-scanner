@@ -1,6 +1,7 @@
-// Step 9: manual entry, receipt PATCH, items, and reference-data CRUD.
+// Manual entry, receipt PATCH, items, and reference-data CRUD.
 //
-// GCC-safety conventions for this file (see check-test-patterns.sh and Step 8's ICE): request
+// GCC-safety conventions for this file (see check-test-patterns.sh, and receipt_test.cpp's
+// oneImage for the GCC 12/13 internal compiler error): request
 // bodies are parsed from raw strings into named locals before being passed to a co_await'd
 // call -- never a braced json literal inside a co_await expression -- and no co_await ever sits
 // inside a Catch2 macro.
@@ -9,6 +10,7 @@
 #include "config/Env.h"
 #include "receipts/ItemService.h"
 #include "receipts/Kinds.h"
+#include "receipts/ReceiptStates.h"
 #include "receipts/ReceiptService.h"
 #include "receipts/ReferenceDataService.h"
 #include "storage/S3ImageStore.h"
@@ -30,8 +32,9 @@ using receipt_scanner::receipts::NotFoundError;
 using receipt_scanner::receipts::ConflictError;
 using receipt_scanner::receipts::ReceiptNotFoundError;
 using receipt_scanner::receipts::ReceiptService;
-using receipt_scanner::receipts::ReferenceDataService;
-using receipt_scanner::receipts::ReferenceKind;
+using receipt_scanner::receipts::CategoryService;
+using receipt_scanner::receipts::PaymentMethodService;
+using receipt_scanner::receipts::TagService;
 using receipt_scanner::receipts::ValidationError;
 using receipt_scanner::storage::ImageNormalizer;
 using receipt_scanner::storage::S3ImageStore;
@@ -137,9 +140,9 @@ drogon::Task<bool> dbAccepts(int64_t userId, std::string kind, std::string direc
 
 } // namespace
 
-// Kinds.h is the C++ source of truth for the kind domain, but migration 001's CHECK constraints
+// Kinds.h / ReceiptStates.h are the C++ source of truth for these domains, but migration 001's CHECK constraints
 // are an independent copy -- this fails if they drift apart.
-TEST_CASE("kinds: Kinds.h agrees with the DB's CHECK constraints", "[ledger]") {
+TEST_CASE("kinds: Kinds.h and ReceiptStates.h agree with the DB's CHECK constraints", "[ledger]") {
   drogon::sync_wait([&]() -> drogon::Task<> {
     co_await wipe();
     auto userId = co_await registerUser("kinds-table@example.com");
@@ -153,6 +156,14 @@ TEST_CASE("kinds: Kinds.h agrees with the DB's CHECK constraints", "[ledger]") {
     auto dbDirections = co_await checkConstraintValues("receipts_direction_check");
     CHECK(dbKinds == cppKinds);
     CHECK(dbDirections == cppDirections);
+
+    namespace states = receipt_scanner::receipts;
+    std::set<std::string> cppScanStates(states::scan_state::kAll.begin(), states::scan_state::kAll.end());
+    std::set<std::string> cppSources(states::source::kAll.begin(), states::source::kAll.end());
+    auto dbScanStates = co_await checkConstraintValues("receipts_scan_state_check");
+    auto dbSources = co_await checkConstraintValues("receipts_source_check");
+    CHECK(dbScanStates == cppScanStates);
+    CHECK(dbSources == cppSources);
 
     for (const auto &rules : kKinds) {
       for (auto direction : kDirections) {
@@ -322,8 +333,8 @@ TEST_CASE("manual: invalid kind/direction/field combinations are rejected and cr
     const char *cases[] = {
         R"({"total_cents": 100, "direction": "inflow"})",                          // purchase must be outflow
         R"({"kind": "income", "direction": "outflow", "total_cents": 100})",       // income must be inflow
-        R"({"kind": "refund", "total_cents": 100, "tax_deductible": true})",       // decided 2b
-        R"({"kind": "reimbursement", "total_cents": 100, "tax_deductible": true})", // decided 2b
+        R"({"kind": "refund", "total_cents": 100, "tax_deductible": true})",       // purchases only
+        R"({"kind": "reimbursement", "total_cents": 100, "tax_deductible": true})", // purchases only
         R"({"kind": "bogus", "total_cents": 100})",
         R"({"total_cents": -5})",                                                  // magnitude, never signed
         R"({"total_cents": 1.5})",                                                 // integer cents only
@@ -383,8 +394,8 @@ TEST_CASE("manual: another tenant's payment method, category, offset target or t
     auto groceriesA = co_await idOf("categories", userA, "groceries");
     auto purchaseA = co_await service.createManual(userA, body(R"({"total_cents": 100})"));
     auto tag = body(R"({"name": "japan-trip"})");
-    ReferenceDataService reference(testDb());
-    auto tagA = co_await reference.create(ReferenceKind::Tag, userA, tag);
+    TagService tags(testDb());
+    auto tagA = co_await tags.create(userA, tag);
 
     auto withPayment = body(R"({"total_cents": 100})");
     withPayment["payment_method_id"] = cashA;
@@ -456,7 +467,7 @@ TEST_CASE("patch: kind changes re-derive direction and enforce the kind rules", 
     shop["category_id"] = groceries;
     auto id = co_await service.createManual(userId, shop);
 
-    // tax_deductible must be cleared in the same edit (decided 2b).
+    // tax_deductible (purchases only) must be cleared in the same edit.
     auto toRefundKeepingFlag = body(R"({"kind": "refund"})");
     auto keptFlag = co_await throws<ValidationError>(service.updateReceipt(userId, id, toRefundKeepingFlag));
     CHECK(keptFlag);
@@ -501,13 +512,13 @@ TEST_CASE("patch: another tenant's receipt is not found", "[ledger]") {
 TEST_CASE("items: CRUD with tag assignment; informational items stay out of income sums", "[ledger]") {
   auto service = receiptService();
   ItemService items(testDb());
-  ReferenceDataService reference(testDb());
+  TagService tags(testDb());
   drogon::sync_wait([&]() -> drogon::Task<> {
     co_await wipe();
     auto userId = co_await registerUser("payslip@example.com");
     auto salary = co_await idOf("categories", userId, "salary");
     auto workTag = body(R"({"name": "work"})");
-    auto tag = co_await reference.create(ReferenceKind::Tag, userId, workTag);
+    auto tag = co_await tags.create(userId, workTag);
 
     auto pay = body(R"({"kind": "income", "merchant": "Employer", "total_cents": 300000})");
     pay["category_id"] = salary;
@@ -568,43 +579,45 @@ TEST_CASE("items: isolated between tenants and between receipts", "[ledger]") {
 }
 
 TEST_CASE("reference data: CRUD, case-insensitive duplicate names, tenant isolation", "[ledger]") {
-  ReferenceDataService reference(testDb());
+  CategoryService categories(testDb());
+  TagService tags(testDb());
+  PaymentMethodService paymentMethods(testDb());
   drogon::sync_wait([&]() -> drogon::Task<> {
     co_await wipe();
     auto userA = co_await registerUser("ref-a@example.com");
     auto userB = co_await registerUser("ref-b@example.com");
 
-    auto seeded = co_await reference.list(ReferenceKind::Category, userA);
+    auto seeded = co_await categories.list(userA);
     CHECK(seeded.size() == 22); // 18 expense + 4 income (spec Category seed list)
 
     auto pets = body(R"({"name": "Pets"})");
-    auto created = co_await reference.create(ReferenceKind::Category, userA, pets);
-    CHECK(created.flag == false);
+    auto created = co_await categories.create(userA, pets);
+    CHECK_FALSE(created.isIncome);
 
     auto dupe = body(R"({"name": "pets"})");
-    auto duplicate = co_await throws<ConflictError>(reference.create(ReferenceKind::Category, userA, dupe));
+    auto duplicate = co_await throws<ConflictError>(categories.create(userA, dupe));
     CHECK(duplicate);
     // Uniqueness is per (user, expense/income side): the other side and other users are free.
     auto incomeOther = body(R"({"name": "other", "is_income": true})");
-    auto otherSide = co_await reference.create(ReferenceKind::Category, userA, incomeOther);
-    CHECK(otherSide.flag == true);
-    auto petsForB = co_await reference.create(ReferenceKind::Category, userB, pets);
+    auto otherSide = co_await categories.create(userA, incomeOther);
+    CHECK(otherSide.isIncome);
+    auto petsForB = co_await categories.create(userB, pets);
     CHECK(petsForB.id != created.id);
 
     auto rename = body(R"({"name": "Pet care"})");
-    auto renamed = co_await reference.update(ReferenceKind::Category, userA, created.id, rename);
+    auto renamed = co_await categories.update(userA, created.id, rename);
     CHECK(renamed.name == "Pet care");
 
-    auto renamedByB = co_await throws<NotFoundError>(reference.update(ReferenceKind::Category, userB, created.id, rename));
-    auto deletedByB = co_await throws<NotFoundError>(reference.remove(ReferenceKind::Category, userB, created.id));
+    auto renamedByB = co_await throws<NotFoundError>(categories.update(userB, created.id, rename));
+    auto deletedByB = co_await throws<NotFoundError>(categories.remove(userB, created.id));
     CHECK(renamedByB);
     CHECK(deletedByB);
 
     auto card = body(R"({"name": "Opal", "stored_value": true})");
-    auto opal = co_await reference.create(ReferenceKind::PaymentMethod, userA, card);
-    CHECK(opal.flag == true);
+    auto opal = co_await paymentMethods.create(userA, card);
+    CHECK(opal.storedValue);
     auto badKey = body(R"({"name": "x", "is_income": true})");
-    auto rejectedKey = co_await throws<ValidationError>(reference.create(ReferenceKind::Tag, userA, badKey));
+    auto rejectedKey = co_await throws<ValidationError>(tags.create(userA, badKey));
     CHECK(rejectedKey);
   }());
 }
@@ -612,7 +625,7 @@ TEST_CASE("reference data: CRUD, case-insensitive duplicate names, tenant isolat
 TEST_CASE("reference data: deleting a category uncategorizes its items; is_income can't flip while in use", "[ledger]") {
   auto service = receiptService();
   ItemService items(testDb());
-  ReferenceDataService reference(testDb());
+  CategoryService categories(testDb());
   drogon::sync_wait([&]() -> drogon::Task<> {
     co_await wipe();
     auto userId = co_await registerUser("ref-delete@example.com");
@@ -623,10 +636,10 @@ TEST_CASE("reference data: deleting a category uncategorizes its items; is_incom
 
     auto toIncome = body(R"({"is_income": true})");
     auto flipRejected =
-        co_await throws<ValidationError>(reference.update(ReferenceKind::Category, userId, groceries, toIncome));
+        co_await throws<ValidationError>(categories.update(userId, groceries, toIncome));
     CHECK(flipRejected);
 
-    co_await reference.remove(ReferenceKind::Category, userId, groceries);
+    co_await categories.remove(userId, groceries);
     auto list = co_await items.list(userId, id);
     REQUIRE(list.size() == 1);
     CHECK_FALSE(list[0].categoryId.has_value());
@@ -635,12 +648,12 @@ TEST_CASE("reference data: deleting a category uncategorizes its items; is_incom
 
 TEST_CASE("reference data: toggling stored_value moves past purchases in and out of spend, live", "[ledger]") {
   auto service = receiptService();
-  ReferenceDataService reference(testDb());
+  PaymentMethodService paymentMethods(testDb());
   drogon::sync_wait([&]() -> drogon::Task<> {
     co_await wipe();
     auto userId = co_await registerUser("opal@example.com");
     auto card = body(R"({"name": "Gift card"})");
-    auto giftCard = co_await reference.create(ReferenceKind::PaymentMethod, userId, card);
+    auto giftCard = co_await paymentMethods.create(userId, card);
 
     auto purchase = body(R"({"total_cents": 2500})");
     purchase["payment_method_id"] = giftCard.id;
@@ -648,9 +661,41 @@ TEST_CASE("reference data: toggling stored_value moves past purchases in and out
 
     auto before = co_await scalar("SELECT count(*) FROM v_countable_spend WHERE user_id = $1", userId);
     auto flag = body(R"({"stored_value": true})");
-    co_await reference.update(ReferenceKind::PaymentMethod, userId, giftCard.id, flag);
+    co_await paymentMethods.update(userId, giftCard.id, flag);
     auto after = co_await scalar("SELECT count(*) FROM v_countable_spend WHERE user_id = $1", userId);
     CHECK(before == 1);
     CHECK(after == 0);
+  }());
+}
+
+TEST_CASE("reference data: tag rename and payment-method partial update", "[ledger]") {
+  TagService tags(testDb());
+  PaymentMethodService paymentMethods(testDb());
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await wipe();
+    auto userA = co_await registerUser("ref-update-a@example.com");
+    auto userB = co_await registerUser("ref-update-b@example.com");
+
+    auto work = body(R"({"name": "work"})");
+    auto travel = body(R"({"name": "travel"})");
+    auto workTag = co_await tags.create(userA, work);
+    co_await tags.create(userA, travel);
+    auto rename = body(R"({"name": "work-reimbursable"})");
+    auto renamed = co_await tags.update(userA, workTag.id, rename);
+    CHECK(renamed.name == "work-reimbursable");
+    auto clashName = body(R"({"name": "TRAVEL"})");
+    auto clash = co_await throws<ConflictError>(tags.update(userA, workTag.id, clashName));
+    auto renamedByB = co_await throws<NotFoundError>(tags.update(userB, workTag.id, rename));
+    CHECK(clash);
+    CHECK(renamedByB);
+
+    auto card = body(R"({"name": "Opal", "stored_value": true})");
+    auto opal = co_await paymentMethods.create(userA, card);
+    auto nameOnly = body(R"({"name": "Opal card"})");
+    auto updated = co_await paymentMethods.update(userA, opal.id, nameOnly);
+    CHECK(updated.name == "Opal card");
+    CHECK(updated.storedValue); // absent field kept
+    auto updatedByB = co_await throws<NotFoundError>(paymentMethods.update(userB, opal.id, nameOnly));
+    CHECK(updatedByB);
   }());
 }

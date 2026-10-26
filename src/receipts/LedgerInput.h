@@ -44,8 +44,8 @@ struct ItemInput {
 struct ManualEntryInput {
   EditableReceipt receipt;
   // Exactly one of these is used: explicit items, or else ONE implicit item (name=merchant,
-  // amount=total, category=categoryId) -- decided 2a, categorization is item-level only, so a
-  // manual entry's single "category" field is UI sugar for that implicit item.
+  // amount=total, category=categoryId). Categorization is item-level only, so a manual
+  // entry's single "category" field is UI sugar for that implicit item.
   std::optional<int64_t> categoryId;
   std::vector<ItemInput> items;
 };
@@ -67,14 +67,14 @@ ItemInput parseNewItem(const nlohmann::json &body);
 void applyItemPatch(ItemInput &item, const nlohmann::json &body, bool &tagsGiven);
 
 // The DB-free rules on a fully merged receipt: kind/direction consistency, tax_deductible only
-// on purchases (decided 2b), offsets only from refund/reimbursement, fx rate only on non-AUD.
+// on purchases, offsets only from refund/reimbursement, fx rate only on non-AUD.
 void validateReceipt(const EditableReceipt &receipt);
 
 // Whether a category of that side may go on an item of a receipt of `kind` (KindRules::
 // usesIncomeCategories; spec Review: the category picker filters by kind).
 bool categoryFitsKind(bool categoryIsIncome, const std::string &kind);
 
-// Decided 4a: computed once from the user-entered rate at entry/edit time, never live.
+// Computed once from the user-entered rate at entry/edit time, never recomputed live.
 std::optional<int64_t> audEquivalentCents(int64_t totalCents, const std::optional<double> &fxRateToAud);
 
 } // namespace receipt_scanner::receipts

@@ -51,6 +51,10 @@ add_library(receipt_scanner_lib OBJECT
   src/receipts/LedgerInput.cpp
   src/receipts/ItemService.cpp
   src/receipts/ReferenceDataService.cpp
+  src/scan/FakeScanProvider.cpp
+  src/scan/MerchantMatcher.cpp
+  src/scan/ScanWorker.cpp
+  src/scan/ScanServices.cpp
   src/controllers/Responses.cpp
   src/controllers/ReceiptController.cpp
   src/controllers/ItemController.cpp

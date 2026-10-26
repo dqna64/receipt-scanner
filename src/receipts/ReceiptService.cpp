@@ -9,7 +9,6 @@
 #include <drogon/drogon.h>
 #include <sodium.h>
 
-#include <algorithm>
 
 namespace receipt_scanner::receipts {
 
@@ -338,9 +337,12 @@ drogon::Task<ReceiptSummary> ReceiptService::updateReceipt(int64_t userId, int64
           "SELECT c.is_income FROM items i JOIN categories c ON c.id = i.category_id "
           "WHERE i.receipt_id = $1 FOR SHARE OF c",
           receiptId);
-      const bool clash = std::any_of(itemCategories.begin(), itemCategories.end(), [&](const drogon::orm::Row &row) {
-        return row["is_income"].as<bool>() != isIncomeSide;
-      });
+      // A loop, not std::any_of: Drogon's result iterator claims random access but has no
+      // operator-, which libstdc++'s any_of needs (Clang's libc++ doesn't, so only GCC fails).
+      bool clash = false;
+      for (const auto &row : itemCategories) {
+        clash = clash || row["is_income"].as<bool>() != isIncomeSide;
+      }
       if (clash) {
         throw ValidationError("this kind change would leave items in the wrong expense/income categories -- "
                               "recategorize them first");

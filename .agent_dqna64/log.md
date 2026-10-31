@@ -6,6 +6,7 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-11-01 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-26 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-19 | 5df2ebae-d65c-4213-9fb3-f4d2f2e3af8f | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-18 | 5df2ebae-d65c-4213-9fb3-f4d2f2e3af8f | Claude | /Users/me/receipt-scanner | (this machine) |
@@ -21,6 +22,17 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
 
+## 2026-11-01 (Step 10 defaults confirmed; Step 11 prerequisites)
+
+**Decided** (folded into spec.md)
+- Step 10 defaults all kept: raw_ocr_json holds only the latest scan (no history) and is the review diff's source; verify fills every empty scannable field (merchant, store name, date, items-if-none); a currency difference is a total mismatch; infrastructure errors spend reclaim_count, not scan_attempts; retry-scan resets both budgets; SCAN_MAX_RECLAIMS=10.
+- Scan concurrency cap stays soft (no advisory lock): racing claims can exceed it by one tick's claims; it only bounds API cost.
+- Step 11 model: Claude Haiku 5.5 (`claude-haiku-5-5`) instead of Haiku 4.5 -- current generation, 10x cheaper. A refusal will be a ScanError (no server-side fallback on Haiku 5.5).
+
+**Done (uncommitted, pending review)**
+- Verify-mode merchant check compares the recorded merchant against both the scanned merchant and the raw store name and keeps the better score (second query only if the first fails). New test; reverting the change fails it. Clang 63/63.
+- User added ANTHROPIC_API_KEY to `.env` (empty placeholder in `.env.example`) and a gitignored `sample-receipts/` folder for golden-set photos (still empty).
+
 ## 2026-10-26 (local Docker slimmed; Step 10 hang fix, compaction continuation of 5df2ebae)
 
 **Done**
@@ -28,6 +40,7 @@ A context-compaction continuation gets a NEW session id — the 2026-07-11 row c
 - Step 10 fix (uncommitted, part of the Step 10 diff): a provider call that never returned leaked the worker's in-process `inFlight_` slots forever (and, since a tick scanned its claims sequentially, blocked its sibling claims too) -- after one hang with concurrency 2 the worker claimed nothing until restart. Now free slots are counted from rows in `scanning` inside the claim statement (a hung scan's slot frees when reclaimStuck re-queues its row; the cap is global across processes and soft under racing claims), and a tick runs its claims concurrently via `drogon::when_all`. New test "a hung scan blocks neither its siblings nor later claims once reclaimed"; reverting to sequential processing fails it. Clang: 61/61. GCC not run.
 - Review follow-ups (user-approved): a receipt found with no images goes straight to scan_failed (one attempt spent, provider never called) instead of burning all 3 attempts; VERIFY_DATE_TOLERANCE_DAYS renamed MATCH_DATE_DAYS and recorded in spec as the window shared by verify-scan and Step 14 dedupe; stale-claim comments now say "re-queued" / "claimed again" instead of reclaimed/re-claimed. Measured pg_trgm similarity on real merchant pairs: 0.3 gives false mismatches ("Woolies"/"Woolworths" 0.27) and false matches ("Chemist Warehouse"/"Bunnings Warehouse" 0.37) -- threshold to be set from the golden set. Date "different month" mismatch rule considered and declined.
 - Committed Step 9 follow-ups + Step 10 together (the two diffs share ReceiptService/ledger_test hunks, so a split commit would have been an unbuilt intermediate state).
+- CI on 7903ac2 failed under GCC only: `std::any_of` over a Drogon result (libstdc++ needs `operator-`, which `ConstResultIterator` lacks despite claiming random access). Fixed with a loop in f061203; CI green on all four jobs (GCC build+test, ASan/UBSan, lint, amd64 deploy image).
 
 ## 2026-10-24 (Step 9 review follow-ups, same session)
 

@@ -388,8 +388,17 @@ drogon::Task<> ScanWorker::applyResult(const Claim &claim, const ScanResult &res
           std::abs(daysBetween(*before->purchaseDate, *result.purchaseDate)) > config_.matchDateDays) {
         allMatch = false;
       }
-      if (before->merchant && result.merchant) {
-        auto similarity = co_await merchantMatcher_.similarity(*before->merchant, *result.merchant);
+      if (before->merchant && (result.merchant || result.storeNameRaw)) {
+        // The better of the scanned merchant and the raw store name: either can be the one
+        // closer to what the user typed (a long store string dilutes trigram similarity).
+        double similarity = 0;
+        if (result.merchant) {
+          similarity = co_await merchantMatcher_.similarity(*before->merchant, *result.merchant);
+        }
+        if (result.storeNameRaw && similarity < config_.merchantMatchThreshold) {
+          auto storeSimilarity = co_await merchantMatcher_.similarity(*before->merchant, *result.storeNameRaw);
+          similarity = std::max(similarity, storeSimilarity);
+        }
         if (similarity < config_.merchantMatchThreshold) {
           allMatch = false;
         }

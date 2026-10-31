@@ -322,6 +322,31 @@ TEST_CASE("worker: verify scan that mismatches sends a reviewed receipt to revie
   }());
 }
 
+TEST_CASE("worker: verify accepts a merchant match on the raw store name alone", "[scan]") {
+  auto service = receiptService();
+  FakeScanProvider provider([](const std::vector<std::string> &, const ScanContext &context) -> drogon::Task<ScanResult> {
+    auto r = result(context, 2350, "Fresh Food People", "2026-10-01");
+    r.storeNameRaw = "WOOLWORTHS METRO 1234";
+    co_return r;
+  });
+  RecordingNotifier notifier;
+  auto worker = makeWorker(provider, notifier);
+
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await ensureBucketExists();
+    co_await wipe();
+    auto userId = co_await registerUser("verify-store-name@example.com");
+    auto manual = body(R"({"merchant": "Woolworths", "total_cents": 2350, "purchase_date": "2026-10-01"})");
+    auto receiptId = co_await service.createManual(userId, manual);
+    co_await service.addImages(userId, receiptId, oneImage(readFixture("tiny.png")), false);
+
+    co_await worker.tick();
+    auto receipt = co_await service.getReceipt(userId, receiptId);
+    CHECK(receipt->isConfirmed);
+    CHECK_FALSE(receipt->needsReview);
+  }());
+}
+
 TEST_CASE("worker: provider errors spend scan_attempts up to scan_failed, notify once, keep reviewed rows reviewed",
           "[scan]") {
   auto service = receiptService();

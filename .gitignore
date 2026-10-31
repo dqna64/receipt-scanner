@@ -8,3 +8,4 @@ vcpkg/installed/
 compile_commands.json
 .DS_Store
 uploads/
+sample-receipts/

@@ -228,7 +228,7 @@ int main(int argc, char **argv) {
       }
     };
     if (expected.contains("kind")) {
-      score("kind", result && result->kind == expected["kind"], result ? result->kind : "-");
+      score("kind", result && result->kind == expected["kind"].get<std::string>(), result ? result->kind : "-");
     }
     if (expected.contains("total")) {
       const auto cents = std::llround(expected["total"].get<double>() * 100);
@@ -298,7 +298,7 @@ int main(int argc, char **argv) {
     if (expected.contains("currency")) {
       auto &tally = currency[group];
       ++tally.total;
-      if (result && result->currency == expected["currency"]) {
+      if (result && result->currency == expected["currency"].get<std::string>()) {
         ++tally.correct;
       } else {
         misses.push_back("currency expected " + expected["currency"].dump() + " got " +

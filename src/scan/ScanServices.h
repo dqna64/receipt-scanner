@@ -7,7 +7,7 @@
 // receipts::imageStore() in AppServices.h.
 namespace receipt_scanner::scan {
 
-// SCAN_PROVIDER selects the adapter; "fake" is currently the only one.
+// SCAN_PROVIDER selects the adapter: "fake" (default, no network) or "anthropic".
 // Throws std::runtime_error for an unknown name, so a typo fails at startup, not mid-scan.
 ScanProvider &scanProvider();
 

@@ -347,6 +347,31 @@ TEST_CASE("worker: verify accepts a merchant match on the raw store name alone",
   }());
 }
 
+TEST_CASE("worker: verify scan of a reviewed transfer completes (the kind check is extraction-only)", "[scan]") {
+  auto service = receiptService();
+  FakeScanProvider provider([](const std::vector<std::string> &, const ScanContext &context) -> drogon::Task<ScanResult> {
+    co_return result(context, 5000, "ING Savings", "2026-10-01");
+  });
+  RecordingNotifier notifier;
+  auto worker = makeWorker(provider, notifier);
+
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await ensureBucketExists();
+    co_await wipe();
+    auto userId = co_await registerUser("verify-transfer@example.com");
+    auto manual = body(R"({"kind": "transfer", "direction": "outflow", "merchant": "ING Savings",
+                           "total_cents": 5000, "purchase_date": "2026-10-01"})");
+    auto receiptId = co_await service.createManual(userId, manual);
+    co_await service.addImages(userId, receiptId, oneImage(readFixture("tiny.png")), false);
+
+    co_await worker.tick();
+    auto receipt = co_await service.getReceipt(userId, receiptId);
+    CHECK(receipt->isConfirmed);
+    auto state = co_await text("SELECT scan_state FROM receipts WHERE id = $1", receiptId);
+    CHECK(state == "idle");
+  }());
+}
+
 TEST_CASE("worker: provider errors spend scan_attempts up to scan_failed, notify once, keep reviewed rows reviewed",
           "[scan]") {
   auto service = receiptService();

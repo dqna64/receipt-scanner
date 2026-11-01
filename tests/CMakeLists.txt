@@ -10,6 +10,7 @@ add_executable(unit_tests
   receipt_test.cpp
   ledger_test.cpp
   scan_worker_test.cpp
+  anthropic_provider_test.cpp
 )
 target_link_libraries(unit_tests PRIVATE receipt_scanner_lib Catch2::Catch2WithMain)
 # Fixture images live in the source tree (tests/fixtures/), not the build dir -- this lets

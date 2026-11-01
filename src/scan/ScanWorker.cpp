@@ -77,10 +77,12 @@ int daysBetween(const std::string &from, const std::string &to) {
 }
 
 // Rejects a result the write step couldn't store, as a ScanError (spends an attempt, same as a
-// parse failure -- the provider returned something unusable). Uppercases the currency.
-void validateResult(ScanResult &result) {
+// parse failure -- the provider returned something unusable). Uppercases the currency. The kind
+// is checked only for extraction: a verify write keeps the row's own kind, which may be one the
+// scanner never classifies (a transfer).
+void validateResult(ScanResult &result, bool verifying) {
   const auto *rules = receipts::findKind(result.kind);
-  if (!rules || !rules->canonicalDirection) {
+  if (!verifying && (!rules || !rules->scannable())) {
     throw ScanError("provider returned an unusable kind: " + result.kind);
   }
   if (result.totalCents < 0) {
@@ -340,8 +342,9 @@ drogon::Task<> ScanWorker::process(Claim claim) {
       auto taxonomy = co_await loadTaxonomy(db_, claim.userId);
       auto context =
           makeContext(taxonomy, snapshot->reviewed ? std::optional<std::string>(snapshot->kind) : std::nullopt);
+      const bool verifying = context.knownKind.has_value();
       auto result = co_await provider_.scanReceipt(std::move(images), std::move(context));
-      validateResult(result);
+      validateResult(result, verifying);
       co_await applyResult(claim, result);
     }
   } catch (const ScanError &e) {

@@ -51,6 +51,7 @@ add_library(receipt_scanner_lib OBJECT
   src/receipts/LedgerInput.cpp
   src/receipts/ItemService.cpp
   src/receipts/ReferenceDataService.cpp
+  src/scan/AnthropicScanProvider.cpp
   src/scan/FakeScanProvider.cpp
   src/scan/MerchantMatcher.cpp
   src/scan/ScanWorker.cpp
@@ -66,6 +67,10 @@ target_link_libraries(receipt_scanner_lib PUBLIC
 
 add_executable(receipt_scanner_server src/main.cpp)
 target_link_libraries(receipt_scanner_server PRIVATE receipt_scanner_lib)
+
+# Golden-set accuracy harness: calls the real API, so it is built but never run by ctest.
+add_executable(golden_harness tools/golden_harness.cpp)
+target_link_libraries(golden_harness PRIVATE receipt_scanner_lib)
 
 enable_testing()
 add_subdirectory(tests)

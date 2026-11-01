@@ -13,6 +13,7 @@
 #include "receipts/ReceiptStates.h"
 #include "receipts/ReceiptService.h"
 #include "receipts/ReferenceDataService.h"
+#include "seeds/DefaultSeeds.h"
 #include "storage/S3ImageStore.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -588,7 +589,7 @@ TEST_CASE("reference data: CRUD, case-insensitive duplicate names, tenant isolat
     auto userB = co_await registerUser("ref-b@example.com");
 
     auto seeded = co_await categories.list(userA);
-    CHECK(seeded.size() == 22); // 18 expense + 4 income (spec Category seed list)
+    CHECK(seeded.size() == receipt_scanner::seeds::kExpenseCategories.size() + receipt_scanner::seeds::kIncomeCategories.size());
 
     auto pets = body(R"({"name": "Pets"})");
     auto created = co_await categories.create(userA, pets);

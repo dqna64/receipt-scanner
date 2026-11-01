@@ -26,9 +26,13 @@ public:
     int maxRetries = 2;
     int maxTokens = 16000;
     std::string effort = "low";
+    // A scan whose items don't add up to its total is run once more at this effort, with no
+    // retries (empty: never).
+    std::string rescanEffort = "medium";
 
     // ANTHROPIC_API_KEY (required: throws std::runtime_error if unset or empty), ANTHROPIC_MODEL,
-    // ANTHROPIC_BASE_URL, SCAN_TIMEOUT_SECONDS, ANTHROPIC_MAX_TOKENS, ANTHROPIC_EFFORT.
+    // ANTHROPIC_BASE_URL, SCAN_TIMEOUT_SECONDS, ANTHROPIC_MAX_TOKENS, ANTHROPIC_EFFORT,
+    // ANTHROPIC_RESCAN_EFFORT.
     static Config fromEnv();
   };
 
@@ -42,6 +46,14 @@ public:
   // A 200 response body -> ScanResult. Throws ScanError for a refusal, a truncated reply, a reply
   // that isn't the schema's JSON, or a document the model reports as unreadable.
   static ScanResult parseResponse(const std::string &body, const ScanContext &context);
+  // True when the non-informational items add up exactly to the total or to the printed subtotal,
+  // or there are no items.
+  static bool itemsAddUp(const ScanResult &result);
+
+protected:
+  // POSTs one request body, retrying 408/429/5xx up to maxRetries times; returns the 200 body.
+  // Virtual so tests can stand in for the network.
+  virtual drogon::Task<std::string> send(std::string body, int maxRetries);
 
 private:
   Config config_;

@@ -51,9 +51,12 @@ inline constexpr std::array<KindRules, 5> kKinds{{
      .scanRules = "merchant is whoever paid the user back (an employer, a friend, a perks program), or null if "
                   "the documents don't name them; not the business where the expense was made. purchase_date is "
                   "the date the money was paid back (null if only the expense date is shown).\n"
-                  "- Exactly one item: name \"Reimbursement\", amount equal to the total, category the one that "
-                  "best fits the expense being reimbursed. It offsets the whole expense, so do not list the "
-                  "expense's own lines."},
+                  "- The items say what the money was paid back for, in the total's currency, and add up to the "
+                  "total. When the documents say what each part of the payment was for (a payment note such as "
+                  "\"pho\", an expense claim that lists its lines), list one item per part, with the category that "
+                  "fits it. Otherwise (a lump sum, a vague note such as \"dinner\", or expense lines that don't add "
+                  "up to the amount paid back), list exactly one item: name \"Reimbursement\", amount equal to the "
+                  "total, category the one that best fits the expense."},
     {.name = "income", .canonicalDirection = "inflow", .allowsTaxDeductible = false, .canOffset = false,
      .isOffsetTarget = false, .usesIncomeCategories = true,
      .scanDocuments = "a payslip, pay advice or paycheck",

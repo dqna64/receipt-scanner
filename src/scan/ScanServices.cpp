@@ -20,7 +20,9 @@ namespace {
 // to 30s of backoff per retry.
 AnthropicScanProvider::Config checkedAnthropicConfig() {
   auto config = AnthropicScanProvider::Config::fromEnv();
-  const double worstCase = (config.timeoutSeconds + 30) * (config.maxRetries + 1);
+  // Every attempt plus up to 30s of backoff each, then the rescan's single attempt.
+  const double worstCase = (config.timeoutSeconds + 30) * (config.maxRetries + 1) +
+                           (config.rescanEffort.empty() ? 0 : config.timeoutSeconds);
   if (worstCase >= ScanWorkerConfig::fromEnv().reclaimAfterSeconds) {
     throw std::runtime_error("SCAN_TIMEOUT_SECONDS is too long for SCAN_RECLAIM_SECONDS: a slow call would be "
                              "re-queued and scanned twice");

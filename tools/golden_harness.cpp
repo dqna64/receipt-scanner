@@ -12,9 +12,9 @@
 //               "expected": {"kind": "purchase", "total": 23.50, "currency": "AUD",
 //                            "purchase_date": "2026-10-01", "merchant": "Woolworths",
 //                            "items": [{"name": "Bananas", "amount": 4.35, "category": "groceries"}]}}]}
-// An item may also carry "informational": true (payslip gross/tax/super lines). Scanned items are
-// paired with labelled ones by amount; each pair's category is scored, and the share of labelled
-// items found is reported. Item categories must be on the default category lists (checked first).
+// An item may also carry "informational": true (payslip gross/tax/super lines) and "quantity"
+// (null: the line prints none). Scanned items are paired with labelled ones by amount; each pair's
+// category, and quantity where labelled, is scored, and the share of labelled items found is reported. Item categories must be on the default category lists (checked first).
 //
 // Writes results-<UTC time>.json next to golden.json: each case's scanned values in the same
 // `expected` shape (so it doubles as a draft to correct into labels) plus the raw reply.
@@ -99,6 +99,9 @@ nlohmann::json asExpected(const ScanResult &result) {
     nlohmann::json line = {{"name", orNull(item.name)},
                            {"amount", static_cast<double>(item.amountCents) / 100},
                            {"category", orNull(item.category)}};
+    if (item.quantity) {
+      line["quantity"] = *item.quantity;
+    }
     if (item.informational) {
       line["informational"] = true;
     }
@@ -197,8 +200,14 @@ int main(int argc, char **argv) {
         images.push_back(std::move(normalized.bytes));
       }
       result = drogon::sync_wait(provider.scanReceipt(std::move(images), context));
-      inputTokens += result->raw["usage"].value("input_tokens", 0);
-      outputTokens += result->raw["usage"].value("output_tokens", 0);
+      const auto addUsage = [&](const nlohmann::json &raw) {
+        inputTokens += raw.at("usage").value("input_tokens", 0);
+        outputTokens += raw.at("usage").value("output_tokens", 0);
+      };
+      addUsage(result->raw);
+      if (const auto first = result->raw.find("first_scan"); first != result->raw.end()) {
+        addUsage(*first);
+      }
       record["expected"] = asExpected(*result);
       record["raw"] = result->raw;
     } catch (const std::exception &e) {
@@ -208,6 +217,9 @@ int main(int argc, char **argv) {
     results["cases"].push_back(record);
 
     std::cout << id << ": ";
+    if (result && result->raw.contains("first_scan")) {
+      std::cout << "(rescanned: items didn't add up) ";
+    }
     if (!result) {
       std::cout << "ERROR " << error << "\n";
     } else if (!labelled) {
@@ -275,6 +287,19 @@ int main(int argc, char **argv) {
         }
         ++found.correct;
         used[*match] = true;
+        if (want.contains("quantity")) {
+          const auto &got = result->items[*match].quantity;
+          const auto &wantQuantity = want["quantity"];
+          const bool ok = wantQuantity.is_null() ? !got : got && *got == wantQuantity.get<double>();
+          auto &tally = tallies[group]["item_quantity"];
+          ++tally.total;
+          if (ok) {
+            ++tally.correct;
+          } else {
+            misses.push_back("item " + label + " quantity expected " + wantQuantity.dump() + " got " +
+                             (got ? nlohmann::json(*got).dump() : "null"));
+          }
+        }
         if (want.value("informational", false)) {
           continue;
         }

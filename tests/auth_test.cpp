@@ -1,5 +1,6 @@
 #include "auth/AuthService.h"
 #include "config/Env.h"
+#include "seeds/DefaultSeeds.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <drogon/orm/DbClient.h>
@@ -10,6 +11,9 @@ using receipt_scanner::auth::AuthService;
 using receipt_scanner::auth::DuplicateEmailError;
 
 namespace {
+
+constexpr auto kSeededCategories =
+    static_cast<int64_t>(receipt_scanner::seeds::kExpenseCategories.size() + receipt_scanner::seeds::kIncomeCategories.size());
 
 // Same process-lifetime-client rationale as tests/db_test.cpp: a fresh DbClient per
 // TEST_CASE deadlocks on teardown (its own I/O thread's callback appears to trigger the
@@ -42,7 +46,7 @@ TEST_CASE("registration seeds categories + cash payment method, in one transacti
         co_await db->execSqlCoro("SELECT count(*) AS n, count(*) FILTER (WHERE is_income) AS income_n "
                                   "FROM categories WHERE user_id = $1",
                                   user.userId);
-    REQUIRE(categoryCount[0]["n"].as<int64_t>() == 22); // 18 expense + 4 income, spec seed lists
+    REQUIRE(categoryCount[0]["n"].as<int64_t>() == kSeededCategories);
     REQUIRE(categoryCount[0]["income_n"].as<int64_t>() == 4);
 
     auto paymentMethods =
@@ -92,12 +96,12 @@ TEST_CASE("two independent signups are isolated", "[auth]") {
     auto userB = co_await authService.registerUser("b@example.com", "password-b");
     REQUIRE(userA.userId != userB.userId);
 
-    // Each has its own 22 seeded categories -- not sharing rows, not skipping the seed
+    // Each has its own seeded categories -- not sharing rows, not skipping the seed
     // because "a taxonomy already exists".
     auto countA = co_await db->execSqlCoro("SELECT count(*) AS n FROM categories WHERE user_id = $1", userA.userId);
     auto countB = co_await db->execSqlCoro("SELECT count(*) AS n FROM categories WHERE user_id = $1", userB.userId);
-    REQUIRE(countA[0]["n"].as<int64_t>() == 22);
-    REQUIRE(countB[0]["n"].as<int64_t>() == 22);
+    REQUIRE(countA[0]["n"].as<int64_t>() == kSeededCategories);
+    REQUIRE(countB[0]["n"].as<int64_t>() == kSeededCategories);
 
     // No category row leaks across the two tenants.
     auto crossCheck = co_await db->execSqlCoro(

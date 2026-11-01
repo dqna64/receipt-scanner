@@ -22,6 +22,21 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
 
+## 2026-11-01 (evening: Step 11 committed; sum check, fee and payment-app rules, hobby)
+
+- Committed Step 11 as 116d8cc, excluding the previous turn's changes (reimbursement items, quantity scoring) so the user can review those alone.
+- 23t: item sum check + one rescan at effort medium (see spec Scan service). Unit-tested with a stubbed `send()`; live, only IMG_7734 (partial self-checkout list) triggered it, and its rescan reported the document unreadable, so the first scan stood. The misread-then-rescan path has not yet been seen live.
+- Prompt: fees/surcharges/tips take the category of what they were charged on; schema gains `subtotal`; a payment-app payer is their handle. Trying "handle - app name" made Haiku invent Venmo/Cash App/PayPal for Beem screenshots (even with "only if printed"), so the app name moved to the personalisation TODO.
+- "hobby" added to the default expense categories (user's label for the keyboard and plugin purchases).
+- Full harness run, all 23 cases checked by the user: kind, total, date 100%; merchant 87% (the Beem app-name misses, fixed after: 3/3 on a re-run); item_category 51/56 = 91%; item_quantity 4/4. Remaining category misses: IMG_7781 (dining/takeaway vs junk food), IMG_7794-7796 (subscriptions vs hobby), IMG_7797 (work-expenses vs hobby). Spend: $0.0193 + 2 x $0.0014.
+
+## 2026-11-01 (later: reimbursement items, quantity labels, full harness run)
+
+- Reimbursement scan rule changed (Kinds.h): best-effort item-level offset. One item per part when the documents say what each part was for, else one whole-amount "Reimbursement" item. No schema or DB change: category stats already sign items by kind.
+- Harness: exports `quantity` in results and scores `item_quantity` when a label has one (no target).
+- golden.json: "dining" -> "dining/takeaway" (user: dining/takeaway is fine); "snack" -> "junk food" pending the user's choice; quantities on IMG_7590, 7677, 7734, 7773; IMG_7532 service fee and IMG_7614 surcharge added (the scan's items add up to the printed total); three Beem reimbursements IMG_7799-7801 drafted.
+- Full run, 23 cases, $0.0179. Only 2 cases are checked, both perfect. Against the drafts: IMG_7773 Pho Tai misread as 22.00 again (it was right 3/3 earlier) and IMG_7677's names shifted by a line with an invented 7th item (items sum 42.70 vs total 39.20). Both are receipts that print prices off their item's line; the prompt's add-up check is not reliable at effort low. Proposed: a code-side sum check (23t).
+
 ## 2026-11-01 (Step 10 defaults confirmed; Step 11 prerequisites)
 
 **Decided** (folded into spec.md)

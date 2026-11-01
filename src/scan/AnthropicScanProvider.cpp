@@ -60,7 +60,8 @@ const std::string &systemPrompt() {
            "- total: the amount that actually changed hands, as a positive number in the main currency unit, "
            "exactly as printed (23.50, not 2350)." +
            totals +
-           "\n- currency: the ISO 4217 code shown by the symbol, text, address or country (e.g. \"$\" on an "
+           "\n- subtotal: the printed subtotal (the lines' sum, before whole-transaction discounts, surcharges "
+           "and tips), as printed. Null if no subtotal is printed.\n- currency: the ISO 4217 code shown by the symbol, text, address or country (e.g. \"$\" on an "
            "Australian receipt is AUD, \"¥\" in Japan is JPY). Use AUD only when the documents give no signal.\n"
            "- merchant: the short brand name a person would use for the business, e.g. \"Woolworths\", "
            "\"Bunnings\", \"McDonald's\", not the legal entity or branch.\n"
@@ -81,6 +82,8 @@ const std::string &systemPrompt() {
            "they don't, re-read them: printed amounts are not always on the same line as their item.\n"
            "- A discount on one line reduces that line's amount. Do not add items for whole-transaction "
            "discounts, loyalty savings, rounding, subtotal, tax/GST, total, payment or change lines.\n"
+           "- A surcharge, service fee, delivery fee or tip is an item, with the category of what it was "
+           "charged on (if that spans several categories, the one with the largest amount).\n"
            "- category: pick from the given categories for the transaction's kind (expense categories for " +
            kindNamesFor(false) + "; income categories for " + kindNamesFor(true) +
            "). Null if none fits.\n"
@@ -178,6 +181,7 @@ nlohmann::json outputSchema(const ScanContext &context) {
       {"unreadable_reason", nullable({{"type", "string"}})},
       {"currency", {{"type", "string"}}},
       {"total", {{"type", "number"}}},
+      {"subtotal", nullable({{"type", "number"}})},
       {"merchant", nullable({{"type", "string"}})},
       {"store_name_raw", nullable({{"type", "string"}})},
       {"purchase_date", nullable({{"type", "string"}, {"format", "date"}})},
@@ -294,6 +298,7 @@ AnthropicScanProvider::Config AnthropicScanProvider::Config::fromEnv() {
   config.timeoutSeconds = std::stod(config::envOr("SCAN_TIMEOUT_SECONDS", std::to_string(config.timeoutSeconds)));
   config.maxTokens = std::stoi(config::envOr("ANTHROPIC_MAX_TOKENS", std::to_string(config.maxTokens)));
   config.effort = config::envOr("ANTHROPIC_EFFORT", config.effort);
+  config.rescanEffort = config::envOr("ANTHROPIC_RESCAN_EFFORT", config.rescanEffort);
   return config;
 }
 
@@ -393,8 +398,53 @@ ScanResult AnthropicScanProvider::parseResponse(const std::string &body, const S
   return result;
 }
 
+bool AnthropicScanProvider::itemsAddUp(const ScanResult &result) {
+  int64_t sum = 0;
+  for (const auto &item : result.items) {
+    if (!item.informational) {
+      sum += item.amountCents;
+    }
+  }
+  // Items match the subtotal when the total has a whole-transaction discount (not an item), and
+  // the total when a surcharge or tip after the subtotal is one. The subtotal stays in raw.output:
+  // nothing outside this check uses it.
+  std::optional<int64_t> subtotal;
+  if (const auto output = result.raw.find("output"); output != result.raw.end()) {
+    if (const auto value = output->find("subtotal"); value != output->end() && value->is_number()) {
+      subtotal = std::llabs(toCents(value->get<double>()));
+    }
+  }
+  return result.items.empty() || sum == result.totalCents || sum == subtotal;
+}
+
 drogon::Task<ScanResult> AnthropicScanProvider::scanReceipt(std::vector<std::string> images, ScanContext context) {
-  const auto body = buildRequest(images, context, config_).dump();
+  const auto firstBody = co_await send(buildRequest(images, context, config_).dump(), config_.maxRetries);
+  auto first = parseResponse(firstBody, context);
+  if (itemsAddUp(first) || config_.rescanEffort.empty()) {
+    co_return first;
+  }
+  // Items that don't add up mean a misread, typically a receipt that prints prices off their
+  // item's line; the prompt's own add-up check doesn't reliably catch it at low effort. The rescan
+  // is best-effort: if it fails, the first scan stands. Either way the review screen can see the
+  // mismatch, since the stored items and total still disagree.
+  auto rescanConfig = config_;
+  rescanConfig.effort = config_.rescanEffort;
+  const auto rescanRequest = buildRequest(images, context, rescanConfig).dump();
+  std::string error;
+  try {
+    const auto secondBody = co_await send(rescanRequest, /*maxRetries=*/0);
+    auto second = parseResponse(secondBody, context);
+    second.raw["first_scan"] = std::move(first.raw);
+    co_return second;
+  } catch (const std::exception &e) {
+    error = e.what();
+  }
+  LOG_WARN << "rescan after an item/total mismatch failed, keeping the first scan: " << error;
+  first.raw["rescan_error"] = error;
+  co_return first;
+}
+
+drogon::Task<std::string> AnthropicScanProvider::send(std::string body, int maxRetries) {
   for (int attempt = 0;; ++attempt) {
     auto req = drogon::HttpRequest::newHttpRequest();
     req->setMethod(drogon::Post);
@@ -409,14 +459,14 @@ drogon::Task<ScanResult> AnthropicScanProvider::scanReceipt(std::vector<std::str
     auto resp = co_await client_->sendRequestCoro(req, config_.timeoutSeconds);
     const auto status = resp->statusCode();
     if (status == drogon::k200OK) {
-      co_return parseResponse(std::string(resp->body()), context);
+      co_return std::string(resp->body());
     }
     const auto message = "Anthropic API HTTP " + std::to_string(static_cast<int>(status)) + ": " +
                          apiErrorMessage(std::string(resp->body()));
     if (!retryable(status)) {
       throw ScanError(message);  // a request this receipt made invalid (e.g. an image the API rejects)
     }
-    if (attempt >= config_.maxRetries) {
+    if (attempt >= maxRetries) {
       throw std::runtime_error(message);  // rate limit or outage: not evidence against this receipt
     }
     double delay = 2 << attempt; // 2s, then 4s

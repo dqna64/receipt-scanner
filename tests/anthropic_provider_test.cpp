@@ -232,6 +232,108 @@ TEST_CASE("anthropic: unusable replies are ScanErrors", "[anthropic]") {
   }
 }
 
+TEST_CASE("anthropic: items add up when the non-informational ones sum to the total", "[anthropic]") {
+  auto result = AnthropicScanProvider::parseResponse(response(purchaseOutput()), extractionContext());
+  CHECK(AnthropicScanProvider::itemsAddUp(result)); // 4.35 + 19.15, the negative line dropped
+
+  result.items.push_back({.name = "Gross pay", .amountCents = 100000, .informational = true});
+  CHECK(AnthropicScanProvider::itemsAddUp(result));
+
+  result.totalCents += 1;
+  CHECK_FALSE(AnthropicScanProvider::itemsAddUp(result));
+
+  auto discounted = purchaseOutput(); // a whole-transaction discount: the items match the subtotal
+  discounted["total"] = 20.0;
+  discounted["subtotal"] = 23.5;
+  CHECK(AnthropicScanProvider::itemsAddUp(
+      AnthropicScanProvider::parseResponse(response(discounted), extractionContext())));
+
+  result.items.clear();
+  CHECK(AnthropicScanProvider::itemsAddUp(result)); // nothing to check
+}
+
+namespace {
+
+// Replaces the network: answers each request with the next reply (throwing once they run out, as
+// an outage would) and records what was sent.
+class StubbedProvider : public AnthropicScanProvider {
+public:
+  StubbedProvider(std::vector<std::string> replies, std::string rescanEffort = "medium")
+      : AnthropicScanProvider(config(std::move(rescanEffort)), loop()), replies_(std::move(replies)) {}
+
+  std::vector<nlohmann::json> requests;
+  std::vector<int> maxRetries;
+
+protected:
+  drogon::Task<std::string> send(std::string body, int retries) override {
+    requests.push_back(nlohmann::json::parse(body));
+    maxRetries.push_back(retries);
+    if (requests.size() > replies_.size()) {
+      throw std::runtime_error("Anthropic API HTTP 529: overloaded");
+    }
+    co_return replies_[requests.size() - 1];
+  }
+
+private:
+  static Config config(std::string rescanEffort) {
+    Config config;
+    config.apiKey = "test";
+    config.rescanEffort = std::move(rescanEffort);
+    return config;
+  }
+  static trantor::EventLoop *loop() {
+    static trantor::EventLoopThread thread;
+    static const bool started = (thread.run(), true);
+    (void)started;
+    return thread.getLoop();
+  }
+
+  std::vector<std::string> replies_;
+};
+
+nlohmann::json mismatchedOutput() {
+  auto output = purchaseOutput();
+  output["total"] = 30.0;
+  return output;
+}
+
+}
+
+TEST_CASE("anthropic: a scan whose items don't add up is rescanned once at the rescan effort", "[anthropic]") {
+  SECTION("items that add up: one request, with the normal retries") {
+    StubbedProvider provider({response(purchaseOutput())});
+    auto result = drogon::sync_wait(provider.scanReceipt(images({kWebp}), extractionContext()));
+    CHECK(provider.requests.size() == 1);
+    CHECK(provider.maxRetries == std::vector<int>{2});
+    CHECK(provider.requests[0]["output_config"]["effort"] == "low");
+    CHECK_FALSE(result.raw.contains("first_scan"));
+  }
+  SECTION("a mismatch: the rescan's result wins and keeps the first scan's raw reply") {
+    auto rescanned = purchaseOutput();
+    rescanned["merchant"] = "Woolworths Metro";
+    StubbedProvider provider({response(mismatchedOutput()), response(rescanned)});
+    auto result = drogon::sync_wait(provider.scanReceipt(images({kWebp}), extractionContext()));
+    REQUIRE(provider.requests.size() == 2);
+    CHECK(provider.requests[1]["output_config"]["effort"] == "medium");
+    CHECK(provider.maxRetries == std::vector<int>{2, 0});
+    CHECK(result.merchant == "Woolworths Metro");
+    CHECK(result.raw["first_scan"]["usage"]["input_tokens"] == 1800);
+  }
+  SECTION("a mismatch whose rescan fails: the first scan stands") {
+    StubbedProvider provider({response(mismatchedOutput())});
+    auto result = drogon::sync_wait(provider.scanReceipt(images({kWebp}), extractionContext()));
+    CHECK(provider.requests.size() == 2);
+    CHECK(result.totalCents == 3000);
+    CHECK(result.raw["rescan_error"] == "Anthropic API HTTP 529: overloaded");
+  }
+  SECTION("an empty rescan effort turns the rescan off") {
+    StubbedProvider provider({response(mismatchedOutput())}, "");
+    auto result = drogon::sync_wait(provider.scanReceipt(images({kWebp}), extractionContext()));
+    CHECK(provider.requests.size() == 1);
+    CHECK(result.totalCents == 3000);
+  }
+}
+
 // Hidden ([.live]): needs the internet. Sends no API key, so it costs nothing; it proves the
 // TLS handshake (certificate verification) works with this build's OpenSSL.
 TEST_CASE("anthropic: the API is reachable over verified TLS", "[.live]") {

@@ -9,10 +9,11 @@ namespace receipt_scanner::seeds {
 // seeds THAT user's own categories + "cash" payment method -- NOT global migration rows,
 // because tenancy is real multi-user; each tenant owns and can edit its own copy).
 
-inline constexpr std::array<std::string_view, 18> kExpenseCategories = {
-    "groceries",      "dining/takeaway", "transport", "fuel",         "household", "utilities",
-    "subscriptions",  "insurance",       "health",    "clothing",     "entertainment", "gifts",
-    "fees",           "bonds/deposits",  "rewards",   "work-expenses", "junk food", "other",
+inline constexpr std::array<std::string_view, 19> kExpenseCategories = {
+    "groceries",      "dining/takeaway", "transport", "fuel",          "household", "utilities",
+    "subscriptions",  "insurance",       "health",    "clothing",      "entertainment", "gifts",
+    "fees",           "bonds/deposits",  "rewards",   "work-expenses", "junk food", "hobby",
+    "other",
 };
 
 inline constexpr std::array<std::string_view, 4> kIncomeCategories = {

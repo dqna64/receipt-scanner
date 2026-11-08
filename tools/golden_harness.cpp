@@ -134,7 +134,9 @@ std::vector<std::string> labelProblems(const nlohmann::json &golden, const ScanC
       if (item.contains("category_same_as")) {
         const auto target = item["category_same_as"];
         const bool named = std::any_of(items.begin(), items.end(),
-                                       [&](const nlohmann::json &other) { return other.value("name", "") == target; });
+                                       [&](const nlohmann::json &other) {
+                                         return target.is_string() && other.value("name", "") == target.get<std::string>();
+                                       });
         if (!named) {
           problems.push_back(testCase.value("id", "?") + ": category_same_as names no item: " + target.dump());
         }

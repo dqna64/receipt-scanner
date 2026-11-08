@@ -9,3 +9,5 @@ compile_commands.json
 .DS_Store
 uploads/
 sample-receipts/
+frontend/node_modules/
+frontend/dist/

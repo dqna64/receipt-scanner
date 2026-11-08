@@ -4,3 +4,5 @@ vcpkg/
 .githooks/
 *.log
 .env
+frontend/node_modules
+frontend/dist

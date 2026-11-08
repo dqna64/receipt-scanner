@@ -13,6 +13,9 @@ These are needed by some vcpkg ports (e.g. libvips' libexif) that build via auto
 Clang from the Xcode command line tools (C++20) is used locally; the vcpkg toolchain
 picks it up automatically.
 
+The frontend needs Node 20.19+ (Vite 8). On macOS 13 Homebrew builds Node from source, so this
+machine uses the official nodejs.org tarball instead.
+
 ## First-time setup
 
 ```
@@ -33,6 +36,9 @@ dbmate up      # applies db/migrations/ -- reads DATABASE_URL from .env
 `dbmate up`/`down` are both clean and reversible (plain SQL migrations, no native Postgres
 ENUM types — see the schema comments). The app's own `DbClient` reads discrete `DB_*` vars
 from `.env` (same credentials as `POSTGRES_*`, used by dbmate's `DATABASE_URL`).
+
+Until the first deploy, schema changes edit the initial migration in place instead of adding
+new ones, so after pulling one, rebuild the local database: `dbmate drop && dbmate up`.
 
 ## Build
 
@@ -61,6 +67,18 @@ a reachable Postgres before building and fails fast with a clear message if it i
 ./build/receipt_scanner_server
 curl localhost:8080/api/v1/health
 ```
+
+Frontend (TypeScript, no framework, + Vite), with the server above running natively on :8080:
+
+```
+cd frontend && npm ci && npm run dev
+```
+
+`npm run typecheck` runs `tsc` (strict); `npm run build` type-checks first. Vite serves on :5173, on the LAN too (`http://<mac-ip>:5173` from a phone), and proxies `/api`
+to :8080, so the session cookie is same-origin.
+
+The integration tests TRUNCATE the same database the dev server uses, so don't keep data you
+care about in the local database.
 
 ## Auth (Step 5)
 

@@ -6,6 +6,7 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-11-09 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-11-08 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-11-01 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-26 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
@@ -22,6 +23,10 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 | 2026-07-09 | cfefe238-3b8b-451c-93fe-f6aab5c18730 | Claude | /Users/me/receipt-scanner | motorway1.local |
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
+
+## 2026-11-09 (attribution rules settled)
+
+- Committed 845b13a (attribution spec, merge rules; not pushed). 31a: items.informational is cut in Step 13 (user). 32b: no same-side rule; an expense attributed to an income item reduces that income category in the attributed view (user). 28b dropped (user). The dev servers were stopped by Claude Code under memory pressure; containers stopped.
 
 ## 2026-11-08 (Node installed; adjustments as items; unattributed reimbursements)
 

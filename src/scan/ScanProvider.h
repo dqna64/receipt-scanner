@@ -28,13 +28,13 @@ struct ScanContext {
 };
 
 struct ScannedItem {
-  std::optional<std::string> name;
-  std::optional<double> quantity;
-  std::optional<int64_t> unitPriceCents;
+  std::optional<std::string> name{};
+  std::optional<double> quantity{};
+  std::optional<int64_t> unitPriceCents{};
   int64_t amountCents = 0;
-  std::optional<std::string> category; // a name from ScanContext, or empty
-  bool informational = false;          // payslip gross/tax/super lines (spec super boundary)
-  std::vector<std::string> tags;       // names from ScanContext
+  std::optional<std::string> category{}; // a name from ScanContext, or empty
+  bool informational = false;            // payslip gross/tax/super lines (spec super boundary)
+  std::vector<std::string> tags{};       // names from ScanContext
 };
 
 // Amounts are *_cents in the spec's unit: 1/100 of the main unit for every currency.

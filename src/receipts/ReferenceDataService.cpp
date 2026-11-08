@@ -3,6 +3,8 @@
 #include "receipts/JsonInput.h"
 #include "receipts/Kinds.h"
 
+#include <algorithm>
+
 namespace receipt_scanner::receipts {
 
 namespace {
@@ -237,6 +239,35 @@ drogon::Task<PaymentMethod> PaymentMethodService::update(int64_t userId, int64_t
 
 drogon::Task<> PaymentMethodService::remove(int64_t userId, int64_t id) {
   co_await removeOwned(db_, "payment_methods", "payment method", userId, id);
+}
+
+drogon::Task<std::string> ScannerNotesService::get(int64_t userId) {
+  auto rows = co_await db_->execSqlCoro("SELECT scanner_notes FROM users WHERE id = $1", userId);
+  if (rows.empty()) {
+    throw NotFoundError("user not found");
+  }
+  co_return rows[0]["scanner_notes"].as<std::string>();
+}
+
+drogon::Task<std::string> ScannerNotesService::set(int64_t userId, const nlohmann::json &body) {
+  in::requireObject(body);
+  in::rejectUnknownKeys(body, {"scanner_notes"});
+  const auto value = body.find("scanner_notes");
+  if (value == body.end() || !value->is_string()) {
+    throw ValidationError("scanner_notes must be a string");
+  }
+  const auto notes = value->get<std::string>();
+  // Characters, as Postgres's char_length counts them: every UTF-8 byte but continuation bytes.
+  const auto chars = std::count_if(notes.begin(), notes.end(), [](char c) { return (c & 0xC0) != 0x80; });
+  if (static_cast<size_t>(chars) > kMaxChars) {
+    throw ValidationError("scanner_notes must be at most " + std::to_string(kMaxChars) + " characters");
+  }
+  auto rows = co_await db_->execSqlCoro("UPDATE users SET scanner_notes = $2 WHERE id = $1 RETURNING scanner_notes",
+                                        userId, notes);
+  if (rows.empty()) {
+    throw NotFoundError("user not found");
+  }
+  co_return rows[0]["scanner_notes"].as<std::string>();
 }
 
 } // namespace receipt_scanner::receipts

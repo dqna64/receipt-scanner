@@ -27,7 +27,7 @@ public:
     int maxTokens = 16000;
     std::string effort = "low";
     // A scan whose items don't add up to its total is run once more at this effort, with no
-    // retries (empty: never).
+    // retries (empty: never); the rescan is kept only if its items add up.
     std::string rescanEffort = "medium";
 
     // ANTHROPIC_API_KEY (required: throws std::runtime_error if unset or empty), ANTHROPIC_MODEL,
@@ -46,8 +46,8 @@ public:
   // A 200 response body -> ScanResult. Throws ScanError for a refusal, a truncated reply, a reply
   // that isn't the schema's JSON, or a document the model reports as unreadable.
   static ScanResult parseResponse(const std::string &body, const ScanContext &context);
-  // True when the non-informational items add up exactly to the total or to the printed subtotal,
-  // or there are no items.
+  // True when the non-informational items, discounts included, add up exactly to the total, or
+  // there are no items.
   static bool itemsAddUp(const ScanResult &result);
 
 protected:

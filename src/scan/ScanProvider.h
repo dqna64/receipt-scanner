@@ -23,6 +23,8 @@ struct ScanContext {
   std::vector<std::string> expenseCategories;
   std::vector<std::string> incomeCategories;
   std::vector<std::string> tags;
+  // The user's own notes about their documents (users.scanner_notes); empty if none.
+  std::string scannerNotes;
 };
 
 struct ScannedItem {

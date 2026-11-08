@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 #include <trantor/net/EventLoopThread.h>
 
+#include <map>
 #include <regex>
 #include <set>
 
@@ -33,6 +34,7 @@ using receipt_scanner::receipts::NotFoundError;
 using receipt_scanner::receipts::ConflictError;
 using receipt_scanner::receipts::ReceiptNotFoundError;
 using receipt_scanner::receipts::ReceiptService;
+using receipt_scanner::receipts::ScannerNotesService;
 using receipt_scanner::receipts::CategoryService;
 using receipt_scanner::receipts::PaymentMethodService;
 using receipt_scanner::receipts::TagService;
@@ -385,6 +387,38 @@ TEST_CASE("manual: explicit items replace the implicit item; fx rate fills the A
   }());
 }
 
+TEST_CASE("items: a whole-transaction discount is a negative item that nets against its category", "[ledger]") {
+  auto service = receiptService();
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await wipe();
+    auto userId = co_await registerUser("discount@example.com");
+    auto groceries = co_await idOf("categories", userId, "groceries");
+    auto household = co_await idOf("categories", userId, "household");
+
+    auto basket = body(R"({"merchant": "Costco", "total_cents": 900,
+                           "items": [{"name": "milk", "amount_cents": 400}, {"name": "bin bags", "amount_cents": 600},
+                                     {"name": "member discount", "amount_cents": -100}]})");
+    basket["items"][0]["category_id"] = groceries;
+    basket["items"][1]["category_id"] = household;
+    basket["items"][2]["category_id"] = household;
+    co_await service.createManual(userId, basket);
+
+    auto spend = co_await testDb()->execSqlCoro(
+        "SELECT category_id, SUM(signed_amount_cents)::bigint AS cents FROM v_countable_spend_items "
+        "WHERE user_id = $1 GROUP BY category_id",
+        userId);
+    std::map<int64_t, int64_t> byCategory;
+    for (const auto &row : spend) {
+      byCategory[row["category_id"].as<int64_t>()] = row["cents"].as<int64_t>();
+    }
+    CHECK(byCategory == std::map<int64_t, int64_t>{{groceries, 400}, {household, 500}});
+
+    auto fractional = body(R"({"total_cents": 100, "items": [{"amount_cents": -0.5}]})");
+    auto rejected = co_await throws<ValidationError>(service.createManual(userId, fractional));
+    CHECK(rejected);
+  }());
+}
+
 TEST_CASE("manual: another tenant's payment method, category, offset target or tag is rejected", "[ledger]") {
   auto service = receiptService();
   drogon::sync_wait([&]() -> drogon::Task<> {
@@ -666,6 +700,43 @@ TEST_CASE("reference data: toggling stored_value moves past purchases in and out
     auto after = co_await scalar("SELECT count(*) FROM v_countable_spend WHERE user_id = $1", userId);
     CHECK(before == 1);
     CHECK(after == 0);
+  }());
+}
+
+TEST_CASE("scanner notes: empty by default, set per user, length-capped", "[ledger]") {
+  ScannerNotesService notes(testDb());
+  drogon::sync_wait([&]() -> drogon::Task<> {
+    co_await wipe();
+    auto userA = co_await registerUser("notes-a@example.com");
+    auto userB = co_await registerUser("notes-b@example.com");
+
+    auto initial = co_await notes.get(userA);
+    CHECK(initial.empty());
+    auto beem = body(R"({"scanner_notes": "Beem payments: merchant is '@handle - Beem'"})");
+    auto stored = co_await notes.set(userA, beem);
+    CHECK(stored == "Beem payments: merchant is '@handle - Beem'");
+    auto readBack = co_await notes.get(userA);
+    auto otherUser = co_await notes.get(userB);
+    CHECK(readBack == stored);
+    CHECK(otherUser.empty());
+
+    // 4000 characters fit even when multi-byte; one more doesn't.
+    std::string atCap;
+    for (size_t i = 0; i < ScannerNotesService::kMaxChars; ++i) {
+      atCap += "\u00e9"; // é: 2 bytes, 1 character
+    }
+    nlohmann::json capBody = {{"scanner_notes", atCap}};
+    auto capped = co_await notes.set(userA, capBody);
+    CHECK(capped == atCap);
+    nlohmann::json overBody = {{"scanner_notes", atCap + "x"}};
+    auto tooLong = co_await throws<ValidationError>(notes.set(userA, overBody));
+    auto notString = body(R"({"scanner_notes": 3})");
+    auto wrongType = co_await throws<ValidationError>(notes.set(userA, notString));
+    auto clear = body(R"({"scanner_notes": ""})");
+    auto cleared = co_await notes.set(userA, clear);
+    CHECK(tooLong);
+    CHECK(wrongType);
+    CHECK(cleared.empty());
   }());
 }
 

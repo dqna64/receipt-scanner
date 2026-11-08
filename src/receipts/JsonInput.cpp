@@ -85,6 +85,14 @@ int64_t cents(const nlohmann::json &value, std::string_view field) {
   return *n;
 }
 
+int64_t signedCents(const nlohmann::json &value, std::string_view field) {
+  auto n = asInt64(value);
+  if (!n) {
+    fail(field, "must be an integer (cents)");
+  }
+  return *n;
+}
+
 std::optional<int64_t> nullableCents(const nlohmann::json &value, std::string_view field) {
   return value.is_null() ? std::nullopt : std::optional<int64_t>(cents(value, field));
 }

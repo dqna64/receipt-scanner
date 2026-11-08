@@ -48,7 +48,7 @@ void applyItemFields(ItemInput &item, const nlohmann::json &body) {
   in::setIfPresent(body, "name", item.name, in::nullableString);
   in::setIfPresent(body, "quantity", item.quantity, in::nullablePositiveNumber);
   in::setIfPresent(body, "unit_price_cents", item.unitPriceCents, in::nullableCents);
-  in::setIfPresent(body, "amount_cents", item.amountCents, in::cents);
+  in::setIfPresent(body, "amount_cents", item.amountCents, in::signedCents);
   in::setIfPresent(body, "category_id", item.categoryId, in::nullableId);
   in::setIfPresent(body, "informational", item.informational, in::boolean);
   in::setIfPresent(body, "tag_ids", item.tagIds, in::idList);

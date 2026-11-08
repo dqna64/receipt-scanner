@@ -62,7 +62,7 @@ nlohmann::json purchaseOutput() {
             {"category", "groceries"}, {"informational", false}, {"tags", nlohmann::json::array()}},
            {{"name", "Member saving"}, {"quantity", nullptr}, {"unit_price", nullptr}, {"amount", -1.0},
             {"category", nullptr}, {"informational", false}, {"tags", nlohmann::json::array()}},
-           {{"name", "  "}, {"quantity", 0}, {"unit_price", nullptr}, {"amount", 19.15},
+           {{"name", "  "}, {"quantity", 0}, {"unit_price", nullptr}, {"amount", 20.15},
             {"category", nullptr}, {"informational", false}, {"tags", nlohmann::json::array({"japan-trip"})}},
        })},
   };
@@ -94,6 +94,20 @@ TEST_CASE("anthropic: the request sends every image in order, then the instructi
   CHECK(instructions.find("Classify its kind") != std::string::npos);
   CHECK(instructions.find("Expense categories: groceries, fuel, other") != std::string::npos);
   CHECK(instructions.find("Income categories: salary, Other") != std::string::npos);
+  CHECK(instructions.find("user_notes") == std::string::npos); // no notes, no section
+}
+
+TEST_CASE("anthropic: the user's scanner notes follow the instructions, if there are any", "[anthropic]") {
+  AnthropicScanProvider::Config config;
+  auto context = extractionContext();
+  context.scannerNotes = "Yee3 is junk food.";
+  auto request = AnthropicScanProvider::buildRequest(images({kWebp}), context, config);
+  const auto instructions = request["messages"][0]["content"].back()["text"].get<std::string>();
+  CHECK(instructions.find("<user_notes>\nYee3 is junk food.\n</user_notes>") != std::string::npos);
+
+  context.scannerNotes = " \n ";
+  request = AnthropicScanProvider::buildRequest(images({kWebp}), context, config);
+  CHECK(request["messages"][0]["content"].back()["text"].get<std::string>().find("user_notes") == std::string::npos);
 }
 
 TEST_CASE("anthropic: extraction asks for the kind and offers both category sides", "[anthropic]") {
@@ -169,18 +183,24 @@ TEST_CASE("anthropic: a reply is parsed into cents, skipping the thinking block"
   CHECK(result.merchant == "Woolworths");
   CHECK(result.storeNameRaw == "WOOLWORTHS METRO 1234");
   CHECK(result.purchaseDate == "2026-10-01");
-  // The negative "Member saving" line is dropped; a blank name and a zero quantity become empty.
-  REQUIRE(result.items.size() == 2);
+  // The negative "Member saving" line stays negative; a blank name and a zero quantity become empty.
+  REQUIRE(result.items.size() == 3);
   CHECK(result.items[0].amountCents == 435); // 4.35 * 100 is 434.999... in binary floating point
   CHECK(result.items[0].unitPriceCents == 218);
   CHECK(result.items[0].quantity == 2.0);
   CHECK(result.items[0].category == "groceries");
-  CHECK_FALSE(result.items[1].name);
-  CHECK_FALSE(result.items[1].quantity);
-  CHECK(result.items[1].tags == std::vector<std::string>{"japan-trip"});
+  CHECK(result.items[1].amountCents == -100);
+  CHECK_FALSE(result.items[2].name);
+  CHECK_FALSE(result.items[2].quantity);
+  CHECK(result.items[2].tags == std::vector<std::string>{"japan-trip"});
   CHECK(result.raw["provider"] == "anthropic");
   CHECK(result.raw["usage"]["input_tokens"] == 1800);
   CHECK(result.raw["output"]["total"] == 23.5);
+
+  auto withZeroLine = purchaseOutput();
+  withZeroLine["items"].push_back({{"name", "Docket Deal"}, {"quantity", nullptr}, {"unit_price", nullptr},
+                                   {"amount", -0.0}, {"category", nullptr}, {"informational", false}});
+  CHECK(AnthropicScanProvider::parseResponse(response(withZeroLine), extractionContext()).items.size() == 3);
 }
 
 TEST_CASE("anthropic: a refund docket's negative figures are kept as magnitudes", "[anthropic]") {
@@ -234,7 +254,7 @@ TEST_CASE("anthropic: unusable replies are ScanErrors", "[anthropic]") {
 
 TEST_CASE("anthropic: items add up when the non-informational ones sum to the total", "[anthropic]") {
   auto result = AnthropicScanProvider::parseResponse(response(purchaseOutput()), extractionContext());
-  CHECK(AnthropicScanProvider::itemsAddUp(result)); // 4.35 + 19.15, the negative line dropped
+  CHECK(AnthropicScanProvider::itemsAddUp(result)); // 4.35 - 1.00 + 20.15, the discount line included
 
   result.items.push_back({.name = "Gross pay", .amountCents = 100000, .informational = true});
   CHECK(AnthropicScanProvider::itemsAddUp(result));
@@ -242,11 +262,15 @@ TEST_CASE("anthropic: items add up when the non-informational ones sum to the to
   result.totalCents += 1;
   CHECK_FALSE(AnthropicScanProvider::itemsAddUp(result));
 
-  auto discounted = purchaseOutput(); // a whole-transaction discount: the items match the subtotal
-  discounted["total"] = 20.0;
-  discounted["subtotal"] = 23.5;
-  CHECK(AnthropicScanProvider::itemsAddUp(
-      AnthropicScanProvider::parseResponse(response(discounted), extractionContext())));
+  auto undiscounted = purchaseOutput(); // a discount left out of the items doesn't add up
+  undiscounted["items"].erase(1);
+  CHECK_FALSE(AnthropicScanProvider::itemsAddUp(
+      AnthropicScanProvider::parseResponse(response(undiscounted), extractionContext())));
+
+  auto surcharged = purchaseOutput(); // nor does a surcharge left out
+  surcharged["total"] = 23.78;
+  CHECK_FALSE(AnthropicScanProvider::itemsAddUp(
+      AnthropicScanProvider::parseResponse(response(surcharged), extractionContext())));
 
   result.items.clear();
   CHECK(AnthropicScanProvider::itemsAddUp(result)); // nothing to check
@@ -308,7 +332,14 @@ TEST_CASE("anthropic: a scan whose items don't add up is rescanned once at the r
     CHECK(provider.requests[0]["output_config"]["effort"] == "low");
     CHECK_FALSE(result.raw.contains("first_scan"));
   }
-  SECTION("a mismatch: the rescan's result wins and keeps the first scan's raw reply") {
+  SECTION("a mismatch whose rescan is also off: the first scan stands, with the rescan's raw reply") {
+    StubbedProvider provider({response(mismatchedOutput()), response(mismatchedOutput())});
+    auto result = drogon::sync_wait(provider.scanReceipt(images({kWebp}), extractionContext()));
+    CHECK(provider.requests.size() == 2);
+    CHECK(result.raw.contains("rescan"));
+    CHECK_FALSE(result.raw.contains("first_scan"));
+  }
+  SECTION("a mismatch: a rescan that adds up wins and keeps the first scan's raw reply") {
     auto rescanned = purchaseOutput();
     rescanned["merchant"] = "Woolworths Metro";
     StubbedProvider provider({response(mismatchedOutput()), response(rescanned)});

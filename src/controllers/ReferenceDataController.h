@@ -36,6 +36,10 @@ public:
                 "receipt_scanner::filters::SessionAuthFilter");
   ADD_METHOD_TO(ReferenceDataController::removePaymentMethod, "/api/v1/payment-methods/{1}", drogon::Delete,
                 "receipt_scanner::filters::SessionAuthFilter");
+  ADD_METHOD_TO(ReferenceDataController::getScannerNotes, "/api/v1/scanner-notes", drogon::Get,
+                "receipt_scanner::filters::SessionAuthFilter");
+  ADD_METHOD_TO(ReferenceDataController::setScannerNotes, "/api/v1/scanner-notes", drogon::Put,
+                "receipt_scanner::filters::SessionAuthFilter");
   METHOD_LIST_END
 
   drogon::Task<> listCategories(drogon::HttpRequestPtr req, Callback callback);
@@ -50,6 +54,8 @@ public:
   drogon::Task<> createPaymentMethod(drogon::HttpRequestPtr req, Callback callback);
   drogon::Task<> updatePaymentMethod(drogon::HttpRequestPtr req, Callback callback, int64_t id);
   drogon::Task<> removePaymentMethod(drogon::HttpRequestPtr req, Callback callback, int64_t id);
+  drogon::Task<> getScannerNotes(drogon::HttpRequestPtr req, Callback callback);
+  drogon::Task<> setScannerNotes(drogon::HttpRequestPtr req, Callback callback);
 };
 
 } // namespace receipt_scanner

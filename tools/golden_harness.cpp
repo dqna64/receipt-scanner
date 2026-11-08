@@ -2,7 +2,7 @@
 // normalizer and the Anthropic adapter, then reports per-field accuracy against the spec targets.
 // Re-run on every prompt, model or provider change. Every run calls the real API and costs money.
 //
-//   golden_harness sample-receipts/golden.json
+//   golden_harness sample-receipts/golden.json [--no-notes]
 //
 // golden.json (image paths are relative to its own directory; every `expected` field is optional,
 // and null means the document doesn't show it). A case is scored only once its labels have been
@@ -12,9 +12,15 @@
 //               "expected": {"kind": "purchase", "total": 23.50, "currency": "AUD",
 //                            "purchase_date": "2026-10-01", "merchant": "Woolworths",
 //                            "items": [{"name": "Bananas", "amount": 4.35, "category": "groceries"}]}}]}
+// A top-level "scanner_notes" string plays the user's scanner notes (users.scanner_notes);
+// --no-notes leaves them out, to measure what they change.
 // An item may also carry "informational": true (payslip gross/tax/super lines) and "quantity"
 // (null: the line prints none). Scanned items are paired with labelled ones by amount; each pair's
-// category, and quantity where labelled, is scored, and the share of labelled items found is reported. Item categories must be on the default category lists (checked first).
+// category, and quantity where labelled, is scored, and the share of labelled items found is
+// reported. Item categories must be on the default category lists (checked first). An item's
+// category is not scored with "category_unscored": true (a choice only the user can make, such as
+// what a reimbursement paid back), and with "category_same_as": "<another item's name>" it is
+// scored on matching the category the scan gave that item (an adjustment such as shipping).
 //
 // Writes results-<UTC time>.json next to golden.json: each case's scanned values in the same
 // `expected` shape (so it doubles as a draft to correct into labels) plus the raw reply.
@@ -117,12 +123,22 @@ nlohmann::json asExpected(const ScanResult &result) {
   };
 }
 
-// A typo in a label (e.g. "dining" for "dining/takeaway") would silently count as a model error.
-std::vector<std::string> unknownCategories(const nlohmann::json &golden, const ScanContext &context) {
+// A typo in a label (e.g. "dining" for "dining/takeaway", or a category_same_as naming no item)
+// would silently count as a model error.
+std::vector<std::string> labelProblems(const nlohmann::json &golden, const ScanContext &context) {
   std::vector<std::string> problems;
   for (const auto &testCase : golden.at("cases")) {
     const auto expected = testCase.value("expected", nlohmann::json::object());
-    for (const auto &item : expected.value("items", nlohmann::json::array())) {
+    const auto items = expected.value("items", nlohmann::json::array());
+    for (const auto &item : items) {
+      if (item.contains("category_same_as")) {
+        const auto target = item["category_same_as"];
+        const bool named = std::any_of(items.begin(), items.end(),
+                                       [&](const nlohmann::json &other) { return other.value("name", "") == target; });
+        if (!named) {
+          problems.push_back(testCase.value("id", "?") + ": category_same_as names no item: " + target.dump());
+        }
+      }
       const auto category = item.value("category", nlohmann::json(nullptr));
       if (category.is_null()) {
         continue;
@@ -149,8 +165,9 @@ std::string utcStamp() {
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc != 2) {
-    std::cerr << "usage: golden_harness <golden.json>\n";
+  const bool withNotes = !(argc == 3 && std::string(argv[2]) == "--no-notes");
+  if (argc != 2 && withNotes) {
+    std::cerr << "usage: golden_harness <golden.json> [--no-notes]\n";
     return 2;
   }
   const fs::path goldenPath = argv[1];
@@ -168,8 +185,11 @@ int main(int argc, char **argv) {
                                    receipt_scanner::seeds::kExpenseCategories.end());
   context.incomeCategories.assign(receipt_scanner::seeds::kIncomeCategories.begin(),
                                   receipt_scanner::seeds::kIncomeCategories.end());
+  if (withNotes) {
+    context.scannerNotes = golden.value("scanner_notes", "");
+  }
 
-  if (const auto problems = unknownCategories(golden, context); !problems.empty()) {
+  if (const auto problems = labelProblems(golden, context); !problems.empty()) {
     for (const auto &problem : problems) {
       std::cerr << problem << "\n";
     }
@@ -205,8 +225,10 @@ int main(int argc, char **argv) {
         outputTokens += raw.at("usage").value("output_tokens", 0);
       };
       addUsage(result->raw);
-      if (const auto first = result->raw.find("first_scan"); first != result->raw.end()) {
-        addUsage(*first);
+      for (const auto *key : {"first_scan", "rescan"}) {
+        if (const auto other = result->raw.find(key); other != result->raw.end()) {
+          addUsage(*other);
+        }
       }
       record["expected"] = asExpected(*result);
       record["raw"] = result->raw;
@@ -218,7 +240,9 @@ int main(int argc, char **argv) {
 
     std::cout << id << ": ";
     if (result && result->raw.contains("first_scan")) {
-      std::cout << "(rescanned: items didn't add up) ";
+      std::cout << "(items didn't add up; rescan kept) ";
+    } else if (result && result->raw.contains("rescan")) {
+      std::cout << "(items didn't add up; rescan didn't either, first scan kept) ";
     }
     if (!result) {
       std::cout << "ERROR " << error << "\n";
@@ -264,7 +288,12 @@ int main(int argc, char **argv) {
       // same name. Item names and counts are best-effort (spec), so only "found" is reported;
       // categories are scored on the pairs (spec: measured on the items actually created).
       std::vector<bool> used(result ? result->items.size() : 0, false);
+      std::vector<std::optional<size_t>> matches; // labelled item -> its scanned pair
+      std::map<std::string, size_t> labelIndex;   // labelled item name -> index, for category_same_as
       for (const auto &want : expected["items"]) {
+        if (want.contains("name") && want["name"].is_string()) {
+          labelIndex.emplace(want["name"].get<std::string>(), matches.size());
+        }
         const auto cents = std::llround(want.at("amount").get<double>() * 100);
         const auto wantName = squash(want.value("name", nlohmann::json("")).is_string()
                                          ? want["name"].get<std::string>()
@@ -278,6 +307,14 @@ int main(int argc, char **argv) {
             match = i;
           }
         }
+        if (match) {
+          used[*match] = true;
+        }
+        matches.push_back(match);
+      }
+      for (size_t w = 0; w < matches.size(); ++w) {
+        const auto &want = expected["items"][w];
+        const auto &match = matches[w];
         auto &found = tallies[group]["items_found"];
         ++found.total;
         const auto label = want.value("name", nlohmann::json("item")).dump() + " " + want["amount"].dump();
@@ -286,7 +323,6 @@ int main(int argc, char **argv) {
           continue;
         }
         ++found.correct;
-        used[*match] = true;
         if (want.contains("quantity")) {
           const auto &got = result->items[*match].quantity;
           const auto &wantQuantity = want["quantity"];
@@ -300,11 +336,21 @@ int main(int argc, char **argv) {
                              (got ? nlohmann::json(*got).dump() : "null"));
           }
         }
-        if (want.value("informational", false)) {
+        if (want.value("informational", false) || want.value("category_unscored", false)) {
           continue;
         }
         const auto &got = result->items[*match].category;
-        const auto &wantCategory = want.value("category", nlohmann::json(nullptr));
+        auto wantCategory = want.value("category", nlohmann::json(nullptr));
+        if (want.contains("category_same_as")) {
+          // An adjustment (shipping, a multi-buy discount) is scored on following its item's category,
+          // whatever that category is.
+          const auto &target = matches[labelIndex.at(want["category_same_as"].get<std::string>())];
+          if (!target) {
+            continue; // its item wasn't found, which is already counted
+          }
+          const auto &targetCategory = result->items[*target].category;
+          wantCategory = targetCategory ? nlohmann::json(*targetCategory) : nlohmann::json(nullptr);
+        }
         const bool ok = wantCategory.is_null() ? !got : got == wantCategory.get<std::string>();
         auto &tally = tallies[group]["item_category"];
         ++tally.total;

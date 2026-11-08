@@ -179,4 +179,27 @@ drogon::Task<> ReferenceDataController::removePaymentMethod(drogon::HttpRequestP
   }
 }
 
+// ---- scanner notes ----
+
+drogon::Task<> ReferenceDataController::getScannerNotes(drogon::HttpRequestPtr req, Callback callback) {
+  receipts::ScannerNotesService service(drogon::app().getDbClient());
+  try {
+    auto notes = co_await service.get(currentUserId(req));
+    callback(jsonResponse(drogon::k200OK, nlohmann::json{{"scanner_notes", notes}}));
+  } catch (...) {
+    sendError(callback);
+  }
+}
+
+drogon::Task<> ReferenceDataController::setScannerNotes(drogon::HttpRequestPtr req, Callback callback) {
+  auto body = http::parseBody(req);
+  receipts::ScannerNotesService service(drogon::app().getDbClient());
+  try {
+    auto notes = co_await service.set(currentUserId(req), body);
+    callback(jsonResponse(drogon::k200OK, nlohmann::json{{"scanner_notes", notes}}));
+  } catch (...) {
+    sendError(callback);
+  }
+}
+
 } // namespace receipt_scanner

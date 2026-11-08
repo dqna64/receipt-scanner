@@ -33,3 +33,10 @@ Docker Desktop's default VM (4 GB / 4 CPUs) lags this laptop, so it is set to **
 - No local `docker build` / `docker compose up` of the app: the GCC build stage needs >1 GB
   per compiler process and OOMs or swaps the VM. GCC coverage comes from CI.
 - `docker compose stop` (or quit Docker Desktop) when done, to give the VM's memory back.
+
+# Schema changes before the first deploy
+
+Decided 2026-11-08 (user). Until the app is deployed with a live database, change the schema by
+editing `db/migrations/20260906000000_initial_schema.sql` instead of adding a migration, then
+rebuild the local database with `dbmate drop && dbmate up` (it only holds test data; the tests
+TRUNCATE it anyway). From the first deploy on, every schema change is a new migration again.

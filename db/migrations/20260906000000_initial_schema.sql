@@ -15,6 +15,10 @@ CREATE TABLE users (
   email CITEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   email_verified_at TIMESTAMPTZ,
+  -- The user's free-text notes about their own documents ("Beem payments: merchant is '@handle -
+  -- Beem'"), added to every scan's prompt. Capped so a runaway paste can't inflate every scan's cost.
+  scanner_notes TEXT NOT NULL DEFAULT ''
+    CONSTRAINT chk_scanner_notes_length CHECK (char_length(scanner_notes) <= 4000),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -49,6 +53,11 @@ CREATE TABLE categories (
   is_income BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX idx_categories_user_id ON categories(user_id);
+-- Reference-data names are unique per user, case-insensitively: the scanner embeds category
+-- and tag names as JSON-schema enums in its output schema, where a duplicate name is
+-- ambiguous at best. Categories are unique per (user, is_income) because the scanner
+-- only ever embeds one side's subset (expense for receipts, income for payslips).
+CREATE UNIQUE INDEX uq_categories_user_name ON categories(user_id, is_income, lower(name));
 
 -- Second taxonomy, item-level only, many-per-item (item_tags below).
 CREATE TABLE tags (
@@ -57,6 +66,7 @@ CREATE TABLE tags (
   name TEXT NOT NULL
 );
 CREATE INDEX idx_tags_user_id ON tags(user_id);
+CREATE UNIQUE INDEX uq_tags_user_name ON tags(user_id, lower(name));
 
 CREATE TABLE payment_methods (
   id BIGSERIAL PRIMARY KEY,
@@ -65,6 +75,7 @@ CREATE TABLE payment_methods (
   stored_value BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX idx_payment_methods_user_id ON payment_methods(user_id);
+CREATE UNIQUE INDEX uq_payment_methods_user_name ON payment_methods(user_id, lower(name));
 
 -- recurring_transactions.purchase_receipt_id -> receipts is added via ALTER after receipts
 -- exists (circular reference: receipts.recurring_id -> recurring_transactions).

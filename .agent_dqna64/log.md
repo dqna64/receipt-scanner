@@ -6,6 +6,7 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 
 | Date | Session ID | Agent | Working Directory | Machine |
 |------|------------|-------|--------------------|---------|
+| 2026-11-08 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-11-01 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-26 | 8b057c0a-e952-481f-be88-b0b4145d94dc | Claude | /Users/me/receipt-scanner | (this machine) |
 | 2026-10-19 | 5df2ebae-d65c-4213-9fb3-f4d2f2e3af8f | Claude | /Users/me/receipt-scanner | (this machine) |
@@ -21,6 +22,36 @@ Daily record of work done. Newest day first. Companion to `.agent_dqna64/spec.md
 | 2026-07-09 | cfefe238-3b8b-451c-93fe-f6aab5c18730 | Claude | /Users/me/receipt-scanner | motorway1.local |
 
 A context-compaction continuation gets a NEW session id — the 2026-07-11 row continues the 2026-07-09 session. To resume the latest state, use the newest row.
+
+## 2026-11-08 (Node installed; adjustments as items; unattributed reimbursements)
+
+- Node: `brew install node` was stopped after ~11 min. macOS 13.5 is a Homebrew Tier 3 config with no bottles, and the plan included building llvm and rust from source. Installed the official Node 26.13.0 LTS tarball under ~/.local/opt instead (user-approved; machine log updated).
+- Adjustments (user): whole-transaction discounts (negative), surcharges, fees, tips, added-on tax and rounding are items with the category of what they apply to. The subtotal field and the subtotal fallback in the sum check are gone; the items must add up to the total. Item amounts may now be negative (API, worker validation, adapter). The adapter drops zero-amount lines ("Docket Deal $0.00" showed up as extra items on two Coles receipts). IMG_7798's label gained its "Order discount -10.00" item, which the scan now finds.
+- Reimbursements (user): an attributable one takes the expense's category; otherwise the worker files its uncategorized item under the new seed "unattributed reimbursements" (`KindRules::fallbackCategory`). Offering that category to the model failed: its name drew 2 of 3 Beem pho repayments. So it is kept off the scanner's list.
+  - Later the same day (27a, user): replaced that seed with null plus a label. The breakdown derives "unattributed reimbursements" from the kind, so `fallbackCategory`, `isFallbackCategory` and the 20th seed are gone. Reason: a missing category is an absence of information, and a real category row can be renamed, deleted or picked by the scanner.
+- Notes framing narrowed to "only the fields it mentions". Without notes, the Beem pho cases were 6/6; with the old framing they failed about half the time; with the new one 8/9 were right. IMG_7797 (an expense app showing USD 115.27 large and the AUD 173.26 paid back small) still reads the USD expense in about 3 of 5 runs with notes, even with a stronger reimbursement total rule. It is 24j, unresolved.
+- 24m: the prompt now says that partial or non-adding items are not "unreadable" (a rescan of IMG_7734 had reported it unreadable). 3/3 runs since then returned results.
+- Final full run: item_category 57/57, total 22/23 (IMG_7797). Spend this session about 9c.
+- 24f decided: the category breakdown gets an uncategorized remainder row (plan Step 17).
+- Step 12 started: `frontend/` (Vite 8.3.5, heic-to 1.6.6 pinned, both at least two weeks old). It has login/register, upload (camera or library; one receipt, or each photo its own receipt), client downscale to a 2048px JPEG with a lazy heic-to fallback found by decode failure, the 409 duplicate dialog with force, history with the live trace (polling only busy rows), add photo, retry scan, and a scanner-notes settings page. Smoke-tested through the Vite proxy with curl against the native server (fake provider): register, login, upload, trace, 409, force, add images, 401. Not yet tried in a real browser or from a phone. The "possible match" deep-link waits for Step 14 (no API field yet). Found: the tests TRUNCATE the dev database.
+- Golden set (user): 5 new cases. IMG_7768 has shipping. IMG_7188, IMG_7238 and IMG_7541 have included GST printed outside the items. receipt-26-09-29 is a self-checkout screen plus the top of a paper docket. The harness gained "category_unscored" and "category_same_as" labels, and the reimbursement categories are now unscored. Before the prompt change, shipping went to `other` and the "buy 2 for $10" deal was folded into a line. After adding the shipping and multi-line-deal rules, all 5 cases passed twice.
+- Full run (28 cases): total 28/28, kind 28/28, date 28/28, merchant 27/28 (IMG_7734 got "Woolworths", which isn't shown), items_found 71/72, item_category 60/63. All 3 category misses are IMG_7590, where names and amounts were shifted by one line and the items still added up. The harness pairs items by amount (23x), so it reports this as category errors. About 3.3c.
+- The build dir's cache had been recreated at 15:02 with Ninja and without the vcpkg toolchain, so configure failed. I ran `cmake --fresh -G "Unix Makefiles"` with the toolchain, and the build was incremental.
+
+- Schema convention (user): until the first deploy, the initial migration is edited in place. Folded `unique_reference_names` and `scanner_notes` into it, and rebuilt the local database with `dbmate drop && dbmate up`; it held only one test user. `dbmate down`/`up` were checked. Recorded in CLAUDE.md and README.
+- GST rule (user): the model works out from the document whether a tax line is included or added on top ("incl. GST" notes, a total labelled as including tax, whether the lines reach the total without it). The three included-GST cases plus three surcharge cases passed twice. There is still no case with tax added on top.
+- Frontend converted to TypeScript 7.0.2 (user). `tsc` type-checks under strict before `vite build`; Vite only strips the types. Response types are in `src/types.ts`. The build passes, and the dev server serves the .ts entry. It is still untested in a browser.
+
+- Item attribution decided (user): `items.is_adjustment` + `item_attributions(item_id, target_item_id)`. Splits follow the target amounts, with no weights yet. An attributed item's category is derived from its targets. No targets means uncategorized. Reimbursement items can target purchase items on other receipts. Recorded in the spec and planned for Step 13. Toiletries stay unscored (user: health or household both fit, and the user changes it if they mind).
+
+## 2026-11-02 (sum-check fixes, scanner notes, Step 12 blocked on Node)
+
+- CI on 116d8cc failed: GCC rejects `std::string == json` in the harness (Clang accepts; the pre-push hook only builds with Clang). Fixed in b6fe122.
+- Committed the user-reviewed changes as 8abf259 (sum check + rescan, fee and reimbursement item rules, hobby), plus the user's call that the "@sam" payment-app convention is a personal preference, not a scan rule (removed from Kinds.h). A `git stash --keep-index` used to test the staged state conflicted on pop; restored exactly from the stash's working-tree and index commits.
+- Rescan is kept only if its items add up (IMG_7773: a medium-effort rescan once lumped three dishes into one 42.00 line). With that, IMG_7773 misread on every first scan and was rescued by the rescan 3/3: the first live confirmation of 23t.
+- 24e: a subtotal match counts only when the total is at or below it; IMG_7487's 0.24 surcharge labelled dining/takeaway (user).
+- 24d scanner notes built (migration 20261101000000, service, routes, worker, prompt block, harness `scanner_notes` + `--no-notes`). Golden runs: notes fixed their targets but leaked: with the first wording IMG_7734 merchant became Woolworths, IMG_7797 read the USD expense, pho repayments became `other` (2/2, vs 0/1 without notes). Scoped framing + narrower notes fixed the Woolworths leak, not IMG_7797 (2/2) or one pho (2/2). Spend this turn ~6c.
+- Step 12 (Vite frontend) is blocked: no Node on the host, and CLAUDE.md allows neither a host install nor containers beyond postgres/minio without asking.
 
 ## 2026-11-01 (evening: Step 11 committed; sum check, fee and payment-app rules, hobby)
 

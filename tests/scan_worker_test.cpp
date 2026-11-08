@@ -10,6 +10,7 @@
 #include "scan/FakeScanProvider.h"
 #include "scan/MerchantMatcher.h"
 #include "scan/ScanWorker.h"
+#include "seeds/DefaultSeeds.h"
 #include "storage/S3ImageStore.h"
 #include "storage/Sigv4Signer.h"
 
@@ -30,6 +31,7 @@ using receipt_scanner::receipts::ConflictError;
 using receipt_scanner::receipts::ItemService;
 using receipt_scanner::receipts::ReceiptNotFoundError;
 using receipt_scanner::receipts::ReceiptService;
+using receipt_scanner::receipts::ScannerNotesService;
 using receipt_scanner::receipts::TagService;
 using receipt_scanner::scan::FakeScanProvider;
 using receipt_scanner::scan::PgTrgmMerchantMatcher;
@@ -227,6 +229,9 @@ TEST_CASE("worker: extraction scan sends the full image set and writes fields + 
     TagService tags(testDb());
     auto workTag = body(R"({"name": "work"})");
     auto tag = co_await tags.create(userId, workTag);
+    ScannerNotesService notes(testDb());
+    auto notesBody = body(R"({"scanner_notes": "WW = Woolworths own brand"})");
+    co_await notes.set(userId, notesBody);
     auto uploaded = co_await service.uploadReceipt(userId, twoImages(readFixture("tiny.png"), readFixture("small.webp")),
                                                    false);
     auto receiptId = std::get<int64_t>(uploaded);
@@ -237,6 +242,8 @@ TEST_CASE("worker: extraction scan sends the full image set and writes fields + 
     REQUIRE(contexts.size() == 1);
     CHECK_FALSE(contexts[0].knownKind.has_value()); // extraction: the provider classifies
     CHECK(contexts[0].incomeCategories.size() == 4);
+    CHECK(contexts[0].expenseCategories.size() == receipt_scanner::seeds::kExpenseCategories.size());
+    CHECK(contexts[0].scannerNotes == "WW = Woolworths own brand");
 
     auto receipt = co_await service.getReceipt(userId, receiptId);
     CHECK(receipt->scanState == "idle");

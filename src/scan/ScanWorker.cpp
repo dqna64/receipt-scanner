@@ -40,6 +40,7 @@ struct TagRef {
 struct Taxonomy {
   std::vector<CategoryRef> categories;
   std::vector<TagRef> tags;
+  std::string scannerNotes;
 };
 
 // The receipt as the write step needs it. Read without a lock to prepare the verify
@@ -88,10 +89,10 @@ void validateResult(ScanResult &result, bool verifying) {
   if (result.totalCents < 0) {
     throw ScanError("provider returned a negative total");
   }
+  // An item's amount may be negative: a whole-transaction discount or rounding (spec Money).
   for (const auto &item : result.items) {
-    if (item.amountCents < 0 || (item.unitPriceCents && *item.unitPriceCents < 0) ||
-        (item.quantity && !(*item.quantity > 0))) {
-      throw ScanError("provider returned an item with a negative amount or non-positive quantity");
+    if ((item.unitPriceCents && *item.unitPriceCents < 0) || (item.quantity && !(*item.quantity > 0))) {
+      throw ScanError("provider returned an item with a negative unit price or non-positive quantity");
     }
   }
   try {
@@ -145,6 +146,10 @@ drogon::Task<Taxonomy> loadTaxonomy(drogon::orm::DbClientPtr db, int64_t userId)
   for (const auto &row : tags) {
     taxonomy.tags.push_back({row["id"].as<int64_t>(), row["name"].as<std::string>()});
   }
+  auto user = co_await db->execSqlCoro("SELECT scanner_notes FROM users WHERE id = $1", userId);
+  if (!user.empty()) {
+    taxonomy.scannerNotes = user[0]["scanner_notes"].as<std::string>();
+  }
   co_return taxonomy;
 }
 
@@ -157,6 +162,7 @@ ScanContext makeContext(const Taxonomy &taxonomy, std::optional<std::string> kno
   for (const auto &tag : taxonomy.tags) {
     context.tags.push_back(tag.name);
   }
+  context.scannerNotes = taxonomy.scannerNotes;
   return context;
 }
 

@@ -89,4 +89,20 @@ private:
   drogon::orm::DbClientPtr db_;
 };
 
+// The user's free-text notes about their own documents, which every scan adds to its prompt
+// (e.g. "Beem payments: merchant is '@handle - Beem'"). Empty by default.
+class ScannerNotesService {
+public:
+  static constexpr size_t kMaxChars = 4000; // also the users.scanner_notes CHECK
+
+  explicit ScannerNotesService(drogon::orm::DbClientPtr db) : db_(std::move(db)) {}
+
+  drogon::Task<std::string> get(int64_t userId);
+  // Body: {"scanner_notes": string}; an empty string clears them. Returns the stored notes.
+  drogon::Task<std::string> set(int64_t userId, const nlohmann::json &body);
+
+private:
+  drogon::orm::DbClientPtr db_;
+};
+
 } // namespace receipt_scanner::receipts

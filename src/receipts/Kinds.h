@@ -47,16 +47,20 @@ inline constexpr std::array<KindRules, 5> kKinds{{
                       "app or claim marked reimbursed or paid, a remittance advice, a payment notification",
      .scanTotal = "the amount actually paid back to the user for the expense shown, in the currency it was "
                   "paid in, which may differ from the expense's own amount (e.g. after currency conversion); if a "
-                  "deposit covers several expenses, only this expense's share",
+                  "deposit covers several expenses, only this expense's share. When the documents show both, the "
+                  "total, currency and date are the payment's, never the expense's, even if the expense itself is "
+                  "recognisable",
      .scanRules = "merchant is whoever paid the user back (an employer, a friend, a perks program), or null if "
                   "the documents don't name them; not the business where the expense was made. purchase_date is "
                   "the date the money was paid back (null if only the expense date is shown).\n"
                   "- The items say what the money was paid back for, in the total's currency, and add up to the "
-                  "total. When the documents say what each part of the payment was for (a payment note such as "
-                  "\"pho\", an expense claim that lists its lines), list one item per part, with the category that "
-                  "fits it. Otherwise (a lump sum, a vague note such as \"dinner\", or expense lines that don't add "
-                  "up to the amount paid back), list exactly one item: name \"Reimbursement\", amount equal to the "
-                  "total, category the one that best fits the expense."},
+                  "total, each with the category of the expense it pays back. When the documents split the payment "
+                  "into parts (a payment note that names each part's amount, an expense claim whose lines add up to "
+                  "the amount paid back), list one item per part. When they say what it paid back only as a whole "
+                  "(a note such as \"pho\" or \"dinner\", an expense claimed in another currency), list one item "
+                  "for it, amount equal to the total. When they don't say what it paid back at all (no note, or a "
+                  "note such as \"thanks\"), list exactly one item: name \"Reimbursement\", amount equal to the "
+                  "total, category null."},
     {.name = "income", .canonicalDirection = "inflow", .allowsTaxDeductible = false, .canOffset = false,
      .isOffsetTarget = false, .usesIncomeCategories = true,
      .scanDocuments = "a payslip, pay advice or paycheck",

@@ -60,8 +60,7 @@ const std::string &systemPrompt() {
            "- total: the amount that actually changed hands, as a positive number in the main currency unit, "
            "exactly as printed (23.50, not 2350)." +
            totals +
-           "\n- subtotal: the printed subtotal (the lines' sum, before whole-transaction discounts, surcharges "
-           "and tips), as printed. Null if no subtotal is printed.\n- currency: the ISO 4217 code shown by the symbol, text, address or country (e.g. \"$\" on an "
+           "\n- currency: the ISO 4217 code shown by the symbol, text, address or country (e.g. \"$\" on an "
            "Australian receipt is AUD, \"¥\" in Japan is JPY). Use AUD only when the documents give no signal.\n"
            "- merchant: the short brand name a person would use for the business, e.g. \"Woolworths\", "
            "\"Bunnings\", \"McDonald's\", not the legal entity or branch.\n"
@@ -71,19 +70,34 @@ const std::string &systemPrompt() {
            "(03/04/2026 is 3 April 2026) unless the document is from a country that writes month-first. Null if "
            "no date is printed.\n"
            "- unreadable_reason: null normally. If the images don't show one of the document types above, or the "
-           "total cannot be read (too blurry, cut off), a short reason; still fill in what you can.\n\n"
+           "total cannot be read (too blurry, cut off), a short reason; still fill in what you can. Items that "
+           "can't all be read, or that don't add up to the total (some out of frame), are not a reason: return "
+           "the ones you can read.\n\n"
            "Items (the transaction's lines):\n"
-           "- amount: the line's total as a positive number, as printed.\n"
+           "- amount: the line's total as printed: positive, except a discount or a rounding down, which is "
+           "negative.\n"
            "- quantity and unit_price: the numbers printed for the line, or null when the line doesn't print "
            "them.\n"
            "- The same product on several lines at the same price is one item, with the combined quantity and "
            "amount.\n"
-           "- Check that the item amounts add up to the subtotal (or the total, if no subtotal is printed). If "
-           "they don't, re-read them: printed amounts are not always on the same line as their item.\n"
-           "- A discount on one line reduces that line's amount. Do not add items for whole-transaction "
-           "discounts, loyalty savings, rounding, subtotal, tax/GST, total, payment or change lines.\n"
-           "- A surcharge, service fee, delivery fee or tip is an item, with the category of what it was "
-           "charged on (if that spans several categories, the one with the largest amount).\n"
+           "- A discount on one line reduces that line's amount; it is not an item of its own. A deal across "
+           "several lines (such as \"buy 2 for $10\") is not a one-line discount, even when it prints under the "
+           "last of them.\n"
+           "- Every other line that changes the amount paid is an item: a whole-transaction discount or voucher "
+           "(negative), a card, weekend or public holiday surcharge, a service, booking, delivery or shipping fee, "
+           "a tip, tax added on top of the prices, and cash rounding. Its category is the category of the items "
+           "it applies to (for shipping, the items shipped), not a category of its own such as fees or other; if "
+           "those items span several categories, the one with the largest amount.\n"
+           "- Lines that don't change the amount paid are not items: subtotal, total, tax already included in "
+           "the prices, payment, change, and savings summaries that repeat discounts already taken off the "
+           "lines.\n"
+           "- A tax line (GST, VAT, sales tax) is either already included in the item prices or added on top of "
+           "them, and documents print both the same way: under a subtotal, or even below the total. Work out "
+           "which from the document: a note such as \"incl. GST\" or \"GST inclusive items\", a total "
+           "labelled as including tax, and whether the lines reach the total without the tax line. List the "
+           "tax as an item only when it is added on top.\n"
+           "- Check that the item amounts add up to the total. If they don't, re-read them: printed amounts are "
+           "not always on the same line as their item.\n"
            "- category: pick from the given categories for the transaction's kind (expense categories for " +
            kindNamesFor(false) + "; income categories for " + kindNamesFor(true) +
            "). Null if none fits.\n"
@@ -181,7 +195,6 @@ nlohmann::json outputSchema(const ScanContext &context) {
       {"unreadable_reason", nullable({{"type", "string"}})},
       {"currency", {{"type", "string"}}},
       {"total", {{"type", "number"}}},
-      {"subtotal", nullable({{"type", "number"}})},
       {"merchant", nullable({{"type", "string"}})},
       {"store_name_raw", nullable({{"type", "string"}})},
       {"purchase_date", nullable({{"type", "string"}, {"format", "date"}})},
@@ -225,6 +238,13 @@ std::string instructions(const ScanContext &context, size_t imageCount) {
     text += "\nIncome categories: " + joined(context.incomeCategories);
   }
   text += "\nTags: " + joined(context.tags);
+  if (context.scannerNotes.find_first_not_of(" \t\r\n") != std::string::npos) {
+    text += "\n\nThe user's own notes about their documents. A note applies only to a document it clearly "
+            "describes, and only to the fields it mentions: there it overrides the general rules, and every "
+            "other field follows the general rules as usual. Ignore the notes that don't match this "
+            "transaction, and never take values from a note that the documents don't show:\n<user_notes>\n" +
+            context.scannerNotes + "\n</user_notes>";
+  }
   return text;
 }
 
@@ -374,14 +394,15 @@ ScanResult AnthropicScanProvider::parseResponse(const std::string &body, const S
     result.purchaseDate = optText(output, "purchase_date");
     for (const auto &line : output.at("items")) {
       auto item = toItem(line);
-      if (item.amountCents < 0) {
-        // Returned lines on a refund docket are printed negative: keep their magnitude. On any
-        // other document a negative line is a discount the prompt says to fold in; dropping it
-        // beats failing the whole scan over a best-effort item.
-        if (result.kind != "refund") {
-          continue;
-        }
+      // Returned lines on a refund docket are printed negative: keep their magnitude. On any other
+      // document a negative line is a whole-transaction discount or rounding, which stays negative
+      // so that the items add up to the total and the discount nets against its category.
+      if (item.amountCents < 0 && result.kind == "refund") {
         item.amountCents = -item.amountCents;
+      }
+      // A zero line (a "$0.00 docket deal") moves no money, so it would only clutter review.
+      if (item.amountCents == 0) {
+        continue;
       }
       result.items.push_back(std::move(item));
     }
@@ -405,16 +426,7 @@ bool AnthropicScanProvider::itemsAddUp(const ScanResult &result) {
       sum += item.amountCents;
     }
   }
-  // Items match the subtotal when the total has a whole-transaction discount (not an item), and
-  // the total when a surcharge or tip after the subtotal is one. The subtotal stays in raw.output:
-  // nothing outside this check uses it.
-  std::optional<int64_t> subtotal;
-  if (const auto output = result.raw.find("output"); output != result.raw.end()) {
-    if (const auto value = output->find("subtotal"); value != output->end() && value->is_number()) {
-      subtotal = std::llabs(toCents(value->get<double>()));
-    }
-  }
-  return result.items.empty() || sum == result.totalCents || sum == subtotal;
+  return result.items.empty() || sum == result.totalCents;
 }
 
 drogon::Task<ScanResult> AnthropicScanProvider::scanReceipt(std::vector<std::string> images, ScanContext context) {
@@ -425,8 +437,9 @@ drogon::Task<ScanResult> AnthropicScanProvider::scanReceipt(std::vector<std::str
   }
   // Items that don't add up mean a misread, typically a receipt that prints prices off their
   // item's line; the prompt's own add-up check doesn't reliably catch it at low effort. The rescan
-  // is best-effort: if it fails, the first scan stands. Either way the review screen can see the
-  // mismatch, since the stored items and total still disagree.
+  // replaces the first scan only if its own items add up: a rescan that is also off can be worse
+  // (seen: three dishes lumped into one line). If it fails or is off, the first scan stands, and
+  // the review screen can see the mismatch since the stored items and total still disagree.
   auto rescanConfig = config_;
   rescanConfig.effort = config_.rescanEffort;
   const auto rescanRequest = buildRequest(images, context, rescanConfig).dump();
@@ -434,8 +447,12 @@ drogon::Task<ScanResult> AnthropicScanProvider::scanReceipt(std::vector<std::str
   try {
     const auto secondBody = co_await send(rescanRequest, /*maxRetries=*/0);
     auto second = parseResponse(secondBody, context);
-    second.raw["first_scan"] = std::move(first.raw);
-    co_return second;
+    if (itemsAddUp(second)) {
+      second.raw["first_scan"] = std::move(first.raw);
+      co_return second;
+    }
+    first.raw["rescan"] = std::move(second.raw);
+    co_return first;
   } catch (const std::exception &e) {
     error = e.what();
   }

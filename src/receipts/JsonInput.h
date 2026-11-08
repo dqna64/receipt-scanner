@@ -27,6 +27,8 @@ std::optional<std::string> nullableString(const nlohmann::json &value, std::stri
 // for every currency -- yen too (¥2000 = 200000), whatever ISO 4217 says.
 int64_t cents(const nlohmann::json &value, std::string_view field);
 std::optional<int64_t> nullableCents(const nlohmann::json &value, std::string_view field);
+// Any integer: an item's amount, which is negative for a whole-transaction discount or rounding.
+int64_t signedCents(const nlohmann::json &value, std::string_view field);
 // Positive integer, or null.
 std::optional<int64_t> nullableId(const nlohmann::json &value, std::string_view field);
 bool boolean(const nlohmann::json &value, std::string_view field);
